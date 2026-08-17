@@ -445,6 +445,270 @@
     })();
   </script>
 
+
+  <!-- ==================================================================
+       Sincronización en la nube (Firebase / Firestore)
+       ------------------------------------------------------------------
+       Cada dato de localStorage viaja con su propia marca de tiempo, así
+       que si se edita en la compu y en el celular gana el más reciente
+       DATO POR DATO, no el último dispositivo que guardó. Eso evita que
+       una edición chica en el celular pise una tarde entera de trabajo.
+       ================================================================== -->
+  <script>
+    (function () {
+      var CFG = {
+        apiKey: "AIzaSyCrCHiXmz0DRzBGXFmp2NPXE57v-JzfBd8",
+        authDomain: "jarvis-6f7a8.firebaseapp.com",
+        projectId: "jarvis-6f7a8",
+        storageBucket: "jarvis-6f7a8.firebasestorage.app",
+        messagingSenderId: "468379284941",
+        appId: "1:468379284941:web:1b9eb7bcbdd9d84d174084",
+        measurementId: "G-NETTQJXTDJ"
+      };
+      var SDK = "https://www.gstatic.com/firebasejs/12.17.1/";
+
+      // UNA SOLA CUENTA PARA TODOS LOS APARATOS.
+      // Antes el documento era el uid del login anónimo, y ese uid es distinto
+      // en cada navegador y en cada aparato: la compu escribía en un documento
+      // y el celular en otro, así que nunca se veían. Ahora los dos apuntan al
+      // mismo documento fijo. El login anónimo sigue, sólo para que las reglas
+      // de Firestore puedan exigir "usuario identificado".
+      var CUENTA = "martin";
+
+      // Preferencias de ESTE aparato: no se sincronizan a propósito.
+      // (el celular quiere la barra cerrada y la compu abierta)
+      var SOLO_LOCAL = { "martin:tema": 1, "martin:sidebar": 1, "martin:header": 1 };
+      var META = "jarvis:syncmeta";     // clave -> marca de tiempo del último cambio local
+      var DEV = "jarvis:deviceId";
+      var LIMITE = 900 * 1024;          // un documento de Firestore aguanta 1 MiB
+
+      function esDato(k) {
+        return !!k && k.indexOf("martin:") === 0 && !SOLO_LOCAL[k];
+      }
+      function clavesLocales() {
+        var out = [];
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (esDato(k)) out.push(k);
+        }
+        return out;
+      }
+      function meta() { try { return JSON.parse(localStorage.getItem(META) || "{}"); } catch (_) { return {}; } }
+      function guardarMeta(m) { try { localStorage.setItem(META, JSON.stringify(m)); } catch (_) {} }
+      function deviceId() {
+        var d = localStorage.getItem(DEV);
+        if (!d) { d = Math.random().toString(36).slice(2, 8) + Date.now().toString(36); localStorage.setItem(DEV, d); }
+        return d;
+      }
+
+      // ---------------------------------------------------------------- estado
+      var estado = { fase: "arrancando", detalle: "", ultima: null, pendientes: 0, uid: "" };
+      var oyentes = [];
+      function avisar() {
+        var copia = { fase: estado.fase, detalle: estado.detalle, ultima: estado.ultima, pendientes: estado.pendientes, uid: estado.uid };
+        oyentes.forEach(function (f) { try { f(copia); } catch (_) {} });
+      }
+      function fase(f, detalle) { estado.fase = f; estado.detalle = detalle || ""; avisar(); }
+
+      var ref = null, sucios = {}, timer = null, ultimoLocal = 0, aplicando = false, montado = false;
+      var recargaPedida = false;
+
+      // ------------------------------------------- enganche con storage.set
+      // Todo el dashboard guarda por acá, así que es el único lugar donde hay
+      // que enterarse de que algo cambió.
+      function marcar(k) {
+        if (aplicando || !esDato(k)) return;
+        var m = meta(); m[k] = Date.now(); guardarMeta(m);
+        sucios[k] = true; ultimoLocal = Date.now();
+        programarSubida(1500);
+      }
+      var setOrig = window.storage.set, remOrig = window.storage.remove;
+      window.storage.set = function (k, v) { var r = setOrig.call(window.storage, k, v); marcar(k); return r; };
+      window.storage.remove = function (k) { var r = remOrig.call(window.storage, k); marcar(k); return r; };
+
+      function programarSubida(ms) {
+        if (!ref) return;
+        clearTimeout(timer);
+        timer = setTimeout(subir, ms == null ? 1500 : ms);
+      }
+
+      // ------------------------------------------------------------- subir
+      function subir() {
+        if (!ref) return;
+        var claves = Object.keys(sucios);
+        if (!claves.length) { if (estado.fase === "subiendo") fase("ok"); return; }
+        sucios = {};
+        var m = meta(), datos = {}, peso = 0;
+        claves.forEach(function (k) {
+          var v = localStorage.getItem(k);
+          var t = m[k] || Date.now();
+          if (v === null) datos[k] = { borrado: true, t: t };
+          else { datos[k] = { v: v, t: t }; peso += v.length; }
+        });
+        if (peso > LIMITE) {
+          fase("error", "Los datos superan el límite de 1 MB por documento");
+          return;
+        }
+        estado.pendientes = claves.length;
+        fase("subiendo");
+        ref.set({ datos: datos, device: deviceId(), updatedAt: Date.now() }, { merge: true })
+          .then(function () {
+            estado.pendientes = 0; estado.ultima = new Date(); fase("ok");
+          })
+          .catch(function (e) {
+            claves.forEach(function (k) { sucios[k] = true; });
+            fase("error", (e && e.message) || "no pude guardar");
+            programarSubida(8000);
+          });
+      }
+
+      // --------------------------------------------------------- reconciliar
+      // Compara lo que hay en la nube con lo que hay acá, DATO POR DATO.
+      // Devuelve cuántos datos cambiaron localmente (para decidir si recargar).
+      function reconciliar(remoto) {
+        remoto = remoto || {};
+        var m = meta(), cambios = 0, subirAhora = {};
+
+        // 1) bajar lo que en la nube es más nuevo
+        Object.keys(remoto).forEach(function (k) {
+          if (!esDato(k)) return;
+          var r = remoto[k];
+          if (!r || typeof r.t !== "number") return;
+          if (r.t <= (m[k] || 0)) return;
+          aplicando = true;
+          try {
+            if (r.borrado) {
+              if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); cambios++; }
+            } else if (typeof r.v === "string") {
+              if (localStorage.getItem(k) !== r.v) { localStorage.setItem(k, r.v); cambios++; }
+            }
+          } catch (_) {}
+          aplicando = false;
+          m[k] = r.t;
+        });
+
+        // 2) subir lo que acá es más nuevo (o lo que la nube nunca vio)
+        clavesLocales().forEach(function (k) {
+          if (m[k] == null) m[k] = Date.now();   // primer arranque: se adopta lo que ya había
+          var r = remoto[k];
+          if (!r || (r.t || 0) < m[k]) subirAhora[k] = true;
+        });
+
+        // 3) borrados hechos acá que la nube todavía no sabe
+        Object.keys(m).forEach(function (k) {
+          if (!esDato(k)) return;
+          if (localStorage.getItem(k) !== null) return;
+          var r = remoto[k];
+          if (r && !r.borrado && (r.t || 0) < m[k]) subirAhora[k] = true;
+        });
+
+        guardarMeta(m);
+        var pend = Object.keys(subirAhora);
+        if (pend.length) {
+          pend.forEach(function (k) { sucios[k] = true; });
+          programarSubida(400);
+        }
+        return cambios;
+      }
+
+      // ------------------------------------------------- recarga prudente
+      // No se recarga mientras el señor está escribiendo ni justo después de
+      // que tocó algo: se espera a que la pantalla esté quieta.
+      function pedirRecarga() {
+        if (recargaPedida) return;
+        recargaPedida = true;
+        var desde = Date.now();
+        (function intentar() {
+          var a = document.activeElement;
+          var escribiendo = !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+          var recien = (Date.now() - ultimoLocal) < 6000;
+          var vencido = (Date.now() - desde) > 30000;   // tope: no esperar para siempre
+          if (escribiendo || (recien && !vencido)) { setTimeout(intentar, 2000); return; }
+          fase("bajando");
+          setTimeout(function () { location.reload(); }, 250);
+        })();
+      }
+
+      // ------------------------------------------------------------ arranque
+      function cargar(url) {
+        return new Promise(function (res, rej) {
+          var s = document.createElement("script");
+          s.src = url; s.async = false;
+          s.onload = res;
+          s.onerror = function () { rej(new Error("no pude cargar " + url)); };
+          document.head.appendChild(s);
+        });
+      }
+
+      function iniciar() {
+        fase("conectando");
+        return cargar(SDK + "firebase-app-compat.js")
+          .then(function () { return cargar(SDK + "firebase-auth-compat.js"); })
+          .then(function () { return cargar(SDK + "firebase-firestore-compat.js"); })
+          .then(function () {
+            firebase.initializeApp(CFG);
+            var db = firebase.firestore();
+            // Que siga andando sin señal: los cambios se guardan y se mandan
+            // solos cuando vuelve internet.
+            return db.enablePersistence({ synchronizeTabs: true })
+              .catch(function () { /* otra pestaña ya la tomó, o el navegador no la soporta */ })
+              .then(function () { return db; });
+          })
+          .then(function (db) {
+            return firebase.auth().signInAnonymously().then(function (cred) {
+              var uid = (cred && cred.user && cred.user.uid) || firebase.auth().currentUser.uid;
+              estado.uid = uid;
+              ref = db.collection("jarvis").doc(CUENTA);
+              fase("ok");
+              ref.onSnapshot(function (snap) {
+                var d = (snap && snap.exists && snap.data()) || {};
+                var propio = d.device === deviceId();
+                var cambios = reconciliar(d.datos || {});
+                estado.ultima = new Date();
+                if (estado.fase !== "subiendo") fase("ok");
+                // Si llegaron datos de OTRO aparato hay que redibujar todo.
+                if (cambios > 0 && montado && !propio) pedirRecarga();
+              }, function (e) {
+                fase("error", (e && e.message) || "se cortó la conexión");
+              });
+            });
+          })
+          .catch(function (e) {
+            fase("error", (e && e.message) || "sin conexión");
+          });
+      }
+
+      // Un import de archivo escribe directo en localStorage, salteándose el
+      // shim. Se marca todo para que suba a la nube igual.
+      function adoptarTodo() {
+        var m = meta(), t = Date.now();
+        clavesLocales().forEach(function (k) { m[k] = t; sucios[k] = true; });
+        guardarMeta(m);
+        programarSubida(500);
+      }
+
+      window.JarvisSync = {
+        iniciar: iniciar,
+        estado: function () { return { fase: estado.fase, detalle: estado.detalle, ultima: estado.ultima, pendientes: estado.pendientes, uid: estado.uid }; },
+        onEstado: function (cb) { oyentes.push(cb); cb(window.JarvisSync.estado()); },
+        forzar: function () { adoptarTodo(); },
+        montado: function () { montado = true; },
+        subirYa: function () { clearTimeout(timer); subir(); }
+      };
+
+      // Si se importa un backup, que también vaya a la nube.
+      if (window.JarvisBackup && window.JarvisBackup.importFile) {
+        var impOrig = window.JarvisBackup.importFile;
+        window.JarvisBackup.importFile = function (f) {
+          return impOrig.call(window.JarvisBackup, f).then(function (n) {
+            if (n > 0) adoptarTodo();
+            return n;
+          });
+        };
+      }
+    })();
+  </script>
+
   <script>
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const Calendar = LucideIcon("Calendar");
@@ -5407,6 +5671,43 @@ function BotonTema() {
     /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none" }, oscuro ? "Claro" : "Oscuro")
   );
 }
+function NubeControl() {
+  const [st, setSt] = useState(
+    window.JarvisSync ? window.JarvisSync.estado() : { fase: "apagado", detalle: "", ultima: null, pendientes: 0 }
+  );
+  useEffect(() => {
+    if (window.JarvisSync) window.JarvisSync.onEstado(setSt);
+  }, []);
+  if (!window.JarvisSync) return null;
+  const mapa = {
+    arrancando: { ico: "\u2601\uFE0F", txt: "Nube", cls: "border-neutral-300 dark:border-neutral-700 text-neutral-500" },
+    conectando: { ico: "\u2601\uFE0F", txt: "Conectando", cls: "border-neutral-300 dark:border-neutral-700 text-neutral-500 animate-pulse" },
+    ok: { ico: "\u2601\uFE0F", txt: "Al d\xEDa", cls: "border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-400" },
+    subiendo: { ico: "\u2601\uFE0F", txt: "Guardando", cls: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 animate-pulse" },
+    bajando: { ico: "\u2601\uFE0F", txt: "Bajando", cls: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 animate-pulse" },
+    error: { ico: "\u26A0\uFE0F", txt: "Sin nube", cls: "border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400" },
+    apagado: { ico: "\u2601\uFE0F", txt: "Nube", cls: "border-neutral-300 dark:border-neutral-700 text-neutral-500" }
+  };
+  const v = mapa[st.fase] || mapa.apagado;
+  const hora = st.ultima ? new Date(st.ultima).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : null;
+  const title = st.fase === "error" ? "Sin sincronizar: " + (st.detalle || "revis\xE1 la conexi\xF3n") + "\nLos cambios se guardan igual en este aparato y suben solos cuando vuelva." : st.fase === "ok" ? "Sincronizado con la nube" + (hora ? " \xB7 " + hora : "") + "\nTus datos aparecen en todos tus aparatos.\nClick para forzar una subida." : "Sincronizaci\xF3n: " + v.txt;
+  return /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        if (st.fase === "error") {
+          window.JarvisSync.iniciar();
+        } else {
+          window.JarvisSync.forzar();
+        }
+      },
+      title,
+      className: `flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-lg border transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900 ${v.cls}`
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-base" }, v.ico),
+    /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none max-w-[74px] truncate" }, st.pendientes > 0 ? st.pendientes + " \u2191" : v.txt)
+  );
+}
 function BackupControl() {
   const [st, setSt] = useState(window.JarvisBackup ? window.JarvisBackup.status() : { connected: false, name: "" });
   const [busy, setBusy] = useState(false);
@@ -6157,7 +6458,7 @@ function App() {
       style: { bottom: "calc(1rem + env(safe-area-inset-bottom))" }
     },
     /* @__PURE__ */ React.createElement(Menu, { size: 20 })
-  ), headerAbierto ? /* @__PURE__ */ React.createElement("div", { className: "border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, "Mart\xEDn ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 2026")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(BackupControl, null), /* @__PURE__ */ React.createElement(
+  ), headerAbierto ? /* @__PURE__ */ React.createElement("div", { className: "border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, "Mart\xEDn ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 2026")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(BackupControl, null), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: handleSync,
@@ -6284,6 +6585,10 @@ function App() {
   function mount() {
     var __root = ReactDOM.createRoot(document.getElementById("root"));
     __root.render(React.createElement(App));
+    if (window.JarvisSync) {
+      window.JarvisSync.montado();
+      window.JarvisSync.iniciar();
+    }
   }
   if (window.JarvisBackup && window.JarvisBackup.restoreSilent) {
     window.JarvisBackup.restoreSilent().then(mount, mount);
