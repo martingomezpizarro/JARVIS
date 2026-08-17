@@ -467,13 +467,19 @@
       };
       var SDK = "https://www.gstatic.com/firebasejs/12.17.1/";
 
-      // UNA SOLA CUENTA PARA TODOS LOS APARATOS.
-      // Antes el documento era el uid del login anónimo, y ese uid es distinto
-      // en cada navegador y en cada aparato: la compu escribía en un documento
-      // y el celular en otro, así que nunca se veían. Ahora los dos apuntan al
-      // mismo documento fijo. El login anónimo sigue, sólo para que las reglas
-      // de Firestore puedan exigir "usuario identificado".
-      var CUENTA = "martin";
+      // UN DOCUMENTO POR PERSONA, con login de Google.
+      // El uid de Google es estable: el mismo en la compu, en el celular y en
+      // cualquier navegador, mientras sea la misma cuenta. (El login anónimo
+      // NO servía: daba un uid distinto por aparato, y por eso antes la compu
+      // escribía en un documento y el celular en otro.)
+      //
+      // QUIÉN PUEDE ENTRAR lo decide la regla de Firestore, no este archivo:
+      // así se agrega un familiar editando la lista de mails en la consola,
+      // sin volver a compilar nada. Acá sólo se traduce el "permission-denied"
+      // a un cartel entendible.
+      var DUENO = "gomezpizarromartin@gmail.com";   // la cuenta que ve los datos precargados
+      var OWNER = "jarvis:owner";                   // uid dueño del localStorage de este navegador
+      var OWNER_MAIL = "jarvis:ownerMail";
 
       // Preferencias de ESTE aparato: no se sincronizan a propósito.
       // (el celular quiere la barra cerrada y la compu abierta)
@@ -640,43 +646,325 @@
         });
       }
 
-      function iniciar() {
+      // ================================================================
+      //                      PANTALLA DE INGRESO
+      // ================================================================
+      // Se dibuja DENTRO de #root a propósito: así el diagnóstico de arriba
+      // ("React cargó pero el dashboard no montó") no salta mientras la
+      // persona todavía no entró.
+      function oscuro() {
+        try { return localStorage.getItem("martin:tema") === "dark"; } catch (_) { return false; }
+      }
+
+      var LOGO_G =
+        '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">' +
+        '<path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2.5 24 .5 14.6.5 6.5 5.9 2.6 13.8l7.8 6.1C12.3 13.9 17.6 9.5 24 9.5z"/>' +
+        '<path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-2.8-.4-4.1H24v8.1h12.6c-.3 2.1-1.6 5.2-4.7 7.3l7.6 5.9c4.4-4.1 6.6-10.1 6.6-17.2z"/>' +
+        '<path fill="#FBBC05" d="M10.4 28.1c-.5-1.4-.8-2.9-.8-4.6s.3-3.2.8-4.6l-7.8-6.1C1 16 0 19.9 0 23.5s1 7.5 2.6 10.7l7.8-6.1z"/>' +
+        '<path fill="#34A853" d="M24 47.5c6.2 0 11.5-2 15.5-5.8l-7.6-5.9c-2 1.4-4.7 2.4-7.9 2.4-6.4 0-11.7-4.4-13.6-10.4l-7.8 6.1C6.5 42.1 14.6 47.5 24 47.5z"/>' +
+        "</svg>";
+
+      var loginAbierto = false;
+
+      function mostrarLogin(opts) {
+        opts = opts || {};
+        var root = document.getElementById("root");
+        if (!root) return;
+        loginAbierto = true;
+        var dark = oscuro();
+        var fondo = dark ? "#0a0a0a" : "#fafaf9";
+        var tarjeta = dark ? "#171717" : "#ffffff";
+        var borde = dark ? "#292524" : "#e7e5e4";
+        var texto = dark ? "#f5f5f4" : "#1c1917";
+        var suave = dark ? "#a3a3a3" : "#78716c";
+
+        var aviso = "";
+        if (opts.error) {
+          aviso =
+            '<div style="margin-top:18px;padding:12px 14px;border-radius:10px;font-size:12.5px;line-height:1.5;' +
+            'background:' + (dark ? "#450a0a" : "#fef2f2") + ';color:' + (dark ? "#fca5a5" : "#b91c1c") +
+            ';border:1px solid ' + (dark ? "#7f1d1d" : "#fecaca") + ';text-align:left;">' + opts.error + "</div>";
+        } else if (opts.aviso) {
+          aviso =
+            '<div style="margin-top:18px;padding:12px 14px;border-radius:10px;font-size:12.5px;line-height:1.5;' +
+            'background:' + (dark ? "#1c1917" : "#fffbeb") + ';color:' + (dark ? "#fcd34d" : "#92400e") +
+            ';border:1px solid ' + (dark ? "#44403c" : "#fde68a") + ';text-align:left;">' + opts.aviso + "</div>";
+        }
+
+        root.innerHTML =
+          '<div id="jarvis-login" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+          'background:' + fondo + ';padding:24px;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;z-index:100;">' +
+            '<div style="width:100%;max-width:380px;background:' + tarjeta + ';border:1px solid ' + borde + ';' +
+            'border-radius:18px;padding:34px 30px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,' + (dark ? ".5" : ".07") + ');">' +
+              '<div style="font-size:30px;line-height:1;margin-bottom:14px;">⚙️</div>' +
+              '<div style="font-size:19px;font-weight:600;color:' + texto + ';letter-spacing:-.01em;">Jarvis</div>' +
+              '<div style="font-size:13px;color:' + suave + ';margin-top:7px;line-height:1.5;">' +
+                "Tu agenda, tus objetivos y tu rutina,<br>en todos tus aparatos." +
+              "</div>" +
+              '<button id="jarvis-entrar" style="margin-top:26px;width:100%;display:flex;align-items:center;justify-content:center;gap:10px;' +
+              'padding:12px 16px;border-radius:11px;border:1px solid ' + borde + ';background:' + (dark ? "#fafafa" : "#ffffff") + ';' +
+              'color:#1f1f1f;font-size:14.5px;font-weight:500;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.06);">' +
+                LOGO_G + "<span>Entrar con Google</span>" +
+              "</button>" +
+              '<div id="jarvis-login-estado" style="margin-top:14px;font-size:12px;color:' + suave + ';min-height:16px;"></div>' +
+              aviso +
+              '<div style="margin-top:22px;font-size:11px;color:' + suave + ';line-height:1.5;">' +
+                "Cada uno ve únicamente su propia información." +
+              "</div>" +
+            "</div>" +
+          "</div>";
+
+        var btn = document.getElementById("jarvis-entrar");
+        if (btn) btn.addEventListener("click", pedirLogin);
+      }
+
+      function estadoLogin(txt) {
+        var d = document.getElementById("jarvis-login-estado");
+        if (d) d.textContent = txt || "";
+      }
+
+      function cerrarLogin() {
+        loginAbierto = false;
+        var root = document.getElementById("root");
+        if (root) root.innerHTML = "";
+      }
+
+      // En la app INSTALADA la ventanita emergente de Google se abre fuera de
+      // la app y el resultado no vuelve: ahí hace falta el redirect, que sale
+      // y regresa a la misma pantalla. En una pestaña normal de Chrome el
+      // popup anda bien incluso en el celular, y es más cómodo.
+      function preferirRedirect() {
+        try {
+          return !!((window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+                    window.navigator.standalone === true);
+        } catch (_) { return false; }
+      }
+
+      function proveedor() {
+        var p = new firebase.auth.GoogleAuthProvider();
+        p.setCustomParameters({ prompt: "select_account" });
+        return p;
+      }
+
+      function pedirLogin() {
+        estadoLogin("Abriendo Google…");
+        try {
+          if (preferirRedirect()) {
+            firebase.auth().signInWithRedirect(proveedor());
+            return;
+          }
+          firebase.auth().signInWithPopup(proveedor()).catch(function (e) {
+            var c = (e && e.code) || "";
+            if (c === "auth/popup-blocked" || c === "auth/popup-closed-by-user" ||
+                c === "auth/cancelled-popup-request" || c === "auth/operation-not-supported-in-this-environment") {
+              estadoLogin("Reintentando sin ventana emergente…");
+              firebase.auth().signInWithRedirect(proveedor());
+              return;
+            }
+            estadoLogin("");
+            mostrarLogin({ error: explicar(e) });
+          });
+        } catch (e) {
+          estadoLogin("");
+          mostrarLogin({ error: explicar(e) });
+        }
+      }
+
+      function explicar(e) {
+        var c = (e && e.code) || "";
+        if (c === "auth/unauthorized-domain") {
+          return "Esta dirección no está autorizada en Firebase. En la consola: <b>Authentication → Settings → Authorized domains</b>, agregá <b>" +
+                 location.hostname + "</b>.";
+        }
+        if (c === "auth/operation-not-allowed") {
+          return "El ingreso con Google todavía no está habilitado en Firebase: <b>Authentication → Sign-in method → Google</b>.";
+        }
+        if (c === "auth/network-request-failed") {
+          return "No hay conexión con Google. La <b>primera</b> vez hace falta internet; después la sesión queda guardada.";
+        }
+        return (e && e.message) || "No pude completar el ingreso.";
+      }
+
+      // ================================================================
+      //                    AISLAMIENTO ENTRE CUENTAS
+      // ================================================================
+      // Dos personas pueden usar el MISMO navegador. El localStorage es uno
+      // solo por dirección, así que hay que borrar los datos del anterior
+      // antes de bajar los del nuevo. Sin esto, lo que dejó uno se subiría
+      // al documento del otro (que es exactamente el error que ya nos costó
+      // una noche).
+      function limpiarDatos() {
+        var fuera = [];
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (esDato(k)) fuera.push(k);
+        }
+        fuera.forEach(function (k) { try { localStorage.removeItem(k); } catch (_) {} });
+        try { localStorage.removeItem(META); } catch (_) {}
+        sucios = {};
+        return fuera.length;
+      }
+
+      // ================================================================
+      //                          ARRANQUE
+      // ================================================================
+      var montar = null, yaMonto = false, db = null;
+
+      function montarUnaVez() {
+        if (yaMonto || !montar) return;
+        yaMonto = true;
+        var root = document.getElementById("root");
+        if (root) root.innerHTML = "";
+        montar();
+      }
+
+      // Sin internet la primera vez no se puede entrar. Pero si esta persona
+      // YA entró en este aparato, el dashboard tiene que seguir abriendo:
+      // guarda todo local y sube cuando vuelva la señal.
+      function modoLocal(motivo) {
+        var dueno = null, mail = null;
+        try { dueno = localStorage.getItem(OWNER); mail = localStorage.getItem(OWNER_MAIL); } catch (_) {}
+        if (!dueno) {
+          mostrarLogin({
+            aviso: "La primera vez necesitás conexión para entrar con Google. Después la sesión queda guardada y el dashboard abre sin internet."
+          });
+          return;
+        }
+        estado.uid = dueno;
+        window.JARVIS_PLANTILLA = (mail === DUENO);
+        window.JarvisUsuario = { nombre: (mail || "").split("@")[0], email: mail || "", foto: "", salir: salir };
+        fase("error", motivo || "sin conexión");
+        montarUnaVez();
+      }
+
+      function salir() {
+        try {
+          if (window.firebase && firebase.auth) {
+            firebase.auth().signOut().then(function () { location.reload(); }, function () { location.reload(); });
+            return;
+          }
+        } catch (_) {}
+        location.reload();
+      }
+
+      function entrar(user) {
+        var uid = user.uid;
+        var mail = (user.email || "").toLowerCase();
+        estado.uid = uid;
+        ref = db.collection("jarvis").doc(uid);
+
+        // ¿Está autorizada esta cuenta? La respuesta la da el servidor: si la
+        // regla la rechaza, esto tira "permission-denied".
+        return ref.get({ source: "server" })
+          .then(function () { return true; })
+          .catch(function (e) {
+            var c = (e && e.code) || "";
+            if (c === "permission-denied") return false;
+            return true;   // sin señal o error pasajero: se sigue, ya sincroniza cuando pueda
+          })
+          .then(function (permitido) {
+            if (!permitido) {
+              ref = null;
+              return firebase.auth().signOut().catch(function () {}).then(function () {
+                mostrarLogin({
+                  error: "La cuenta <b>" + (mail || "esa") + "</b> no está autorizada. " +
+                         "Pedile a Martín que la agregue a la lista y volvé a intentar."
+                });
+              });
+            }
+
+            // Cambio de persona en este navegador → borrón y cuenta nueva.
+            var previo = null;
+            try { previo = localStorage.getItem(OWNER); } catch (_) {}
+            if (previo && previo !== uid) {
+              var n = limpiarDatos();
+              console.log("[Jarvis] otra cuenta en este navegador: borré " + n + " datos del anterior.");
+            }
+            try {
+              localStorage.setItem(OWNER, uid);
+              localStorage.setItem(OWNER_MAIL, mail);
+            } catch (_) {}
+
+            // Sólo la cuenta dueña ve la rutina y los objetivos precargados;
+            // cualquier otra arranca en blanco y arma los suyos.
+            window.JARVIS_PLANTILLA = (mail === DUENO);
+            window.JarvisUsuario = {
+              nombre: user.displayName || mail.split("@")[0],
+              email: mail,
+              foto: user.photoURL || "",
+              salir: salir
+            };
+
+            cerrarLogin();
+            fase("ok");
+
+            ref.onSnapshot(function (snap) {
+              var d = (snap && snap.exists && snap.data()) || {};
+              var propio = d.device === deviceId();
+              var cambios = reconciliar(d.datos || {});
+              estado.ultima = new Date();
+              if (estado.fase !== "subiendo") fase("ok");
+              // Si llegaron datos de OTRO aparato hay que redibujar todo.
+              if (cambios > 0 && montado && !propio) pedirRecarga();
+            }, function (e) {
+              fase("error", (e && e.message) || "se cortó la conexión");
+            });
+
+            montarUnaVez();
+          });
+      }
+
+      function esperando(txt) {
+        var root = document.getElementById("root");
+        if (!root || yaMonto || loginAbierto) return;
+        var dark = oscuro();
+        root.innerHTML =
+          '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+          'background:' + (dark ? "#0a0a0a" : "#fafaf9") + ';color:' + (dark ? "#a3a3a3" : "#78716c") + ';' +
+          'font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;">' +
+          '<div style="text-align:center;"><div style="font-size:26px;margin-bottom:10px;">\u2699\uFE0F</div>' + (txt || "Un momento\u2026") + "</div></div>";
+      }
+
+      function arrancar(fnMontar) {
+        montar = fnMontar;
         fase("conectando");
+        esperando("Un momento\u2026");
         return cargar(SDK + "firebase-app-compat.js")
           .then(function () { return cargar(SDK + "firebase-auth-compat.js"); })
           .then(function () { return cargar(SDK + "firebase-firestore-compat.js"); })
           .then(function () {
             firebase.initializeApp(CFG);
-            var db = firebase.firestore();
+            db = firebase.firestore();
             // Que siga andando sin señal: los cambios se guardan y se mandan
             // solos cuando vuelve internet.
             return db.enablePersistence({ synchronizeTabs: true })
-              .catch(function () { /* otra pestaña ya la tomó, o el navegador no la soporta */ })
-              .then(function () { return db; });
+              .catch(function () { /* otra pestaña ya la tomó, o el navegador no la soporta */ });
           })
-          .then(function (db) {
-            return firebase.auth().signInAnonymously().then(function (cred) {
-              var uid = (cred && cred.user && cred.user.uid) || firebase.auth().currentUser.uid;
-              estado.uid = uid;
-              ref = db.collection("jarvis").doc(CUENTA);
-              fase("ok");
-              ref.onSnapshot(function (snap) {
-                var d = (snap && snap.exists && snap.data()) || {};
-                var propio = d.device === deviceId();
-                var cambios = reconciliar(d.datos || {});
-                estado.ultima = new Date();
-                if (estado.fase !== "subiendo") fase("ok");
-                // Si llegaron datos de OTRO aparato hay que redibujar todo.
-                if (cambios > 0 && montado && !propio) pedirRecarga();
-              }, function (e) {
-                fase("error", (e && e.message) || "se cortó la conexión");
-              });
+          .then(function () {
+            // Vuelta del redirect de Google (celular / app instalada).
+            return firebase.auth().getRedirectResult().catch(function (e) {
+              pendienteError = explicar(e);
+            });
+          })
+          .then(function () {
+            firebase.auth().onAuthStateChanged(function (user) {
+              if (user) {
+                entrar(user);
+              } else if (!yaMonto) {
+                mostrarLogin(pendienteError ? { error: pendienteError } : {});
+                pendienteError = null;
+              }
+            }, function (e) {
+              modoLocal(explicar(e));
             });
           })
           .catch(function (e) {
-            fase("error", (e && e.message) || "sin conexión");
+            // No cargaron los SDK (sin internet, CDN bloqueado, etc.)
+            console.warn("[Jarvis] sin nube:", e);
+            modoLocal((e && e.message) || "sin conexión");
           });
       }
+      var pendienteError = null;
 
       // Un import de archivo escribe directo en localStorage, salteándose el
       // shim. Se marca todo para que suba a la nube igual.
@@ -688,7 +976,11 @@
       }
 
       window.JarvisSync = {
-        iniciar: iniciar,
+        arrancar: arrancar,
+        // "iniciar" queda por compatibilidad: el botón de la nube lo llama
+        // cuando está en error, y ahí lo más sano es recargar de cero.
+        iniciar: function () { location.reload(); },
+        usuario: function () { return window.JarvisUsuario || null; },
         estado: function () { return { fase: estado.fase, detalle: estado.detalle, ultima: estado.ultima, pendientes: estado.pendientes, uid: estado.uid }; },
         onEstado: function (cb) { oyentes.push(cb); cb(window.JarvisSync.estado()); },
         forzar: function () { adoptarTodo(); },
@@ -965,10 +1257,19 @@ function reloadSyncScript(src) {
     xhr.send();
   });
 }
+function usaPlantilla() {
+  return window.JARVIS_PLANTILLA !== false;
+}
 async function loadSyncData(opts) {
   const forceReload = !!(opts && opts.forceReload);
   let rutinaSyncInfo = null;
   let objetivosSyncInfo = null;
+  if (!usaPlantilla()) {
+    RUTINA_LABORAL = [];
+    RUTINA_EXTRAS = {};
+    TAREAS_ESPECIFICAS = [];
+    return { rutinaSyncInfo: null, objetivosSyncInfo: null };
+  }
   if (forceReload) {
     window.RUTINA_SYNC_DATA = void 0;
     window.OBJETIVOS_SYNC_DATA = void 0;
@@ -5671,6 +5972,29 @@ function BotonTema() {
     /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none" }, oscuro ? "Claro" : "Oscuro")
   );
 }
+function UsuarioControl() {
+  const [abierto, setAbierto] = useState(false);
+  const u = window.JarvisUsuario;
+  if (!u) return null;
+  const inicial = (u.nombre || u.email || "?").trim().charAt(0).toUpperCase();
+  return /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setAbierto((v) => !v),
+      title: u.email,
+      className: "flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900"
+    },
+    u.foto ? /* @__PURE__ */ React.createElement("img", { src: u.foto, alt: "", referrerPolicy: "no-referrer", className: "w-4 h-4 rounded-full" }) : /* @__PURE__ */ React.createElement("span", { className: "w-4 h-4 rounded-full bg-neutral-300 dark:bg-neutral-700 text-[10px] leading-4 text-center" }, inicial),
+    /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none max-w-[74px] truncate" }, (u.nombre || "Cuenta").split(" ")[0])
+  ), abierto && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-40", onClick: () => setAbierto(false) }), /* @__PURE__ */ React.createElement("div", { className: "absolute right-0 top-full mt-1 z-50 w-60 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-3 text-left" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium truncate text-neutral-800 dark:text-neutral-200" }, u.nombre), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 truncate" }, u.email), /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400 mt-2 mb-2.5 leading-snug" }, "Tu informaci\xF3n es s\xF3lo tuya: nadie m\xE1s de la familia la ve."), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => u.salir(),
+      className: "w-full text-xs px-2 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+    },
+    "Salir de esta cuenta"
+  ))));
+}
 function NubeControl() {
   const [st, setSt] = useState(
     window.JarvisSync ? window.JarvisSync.estado() : { fase: "apagado", detalle: "", ultima: null, pendientes: 0 }
@@ -5788,7 +6112,7 @@ function App() {
   const [tab, setTab] = useState("dia");
   const [now, setNow] = useState(/* @__PURE__ */ new Date());
   const [selectedDay, setSelectedDay] = useState(currentDayKey(/* @__PURE__ */ new Date()));
-  const [objetivos, setObjetivosState] = useState(OBJETIVOS_DEFAULT);
+  const [objetivos, setObjetivosState] = useState(() => usaPlantilla() ? OBJETIVOS_DEFAULT : []);
   const [checklists, setChecklistsState] = useState({});
   const [feedback, setFeedbackState] = useState({});
   const [loaded, setLoaded] = useState(false);
@@ -5800,7 +6124,7 @@ function App() {
   const [manuales, setManuales] = useState([]);
   const [bloquesHechos, setBloquesHechos] = useState({});
   const [rutinaGeneral, setRutinaGeneral] = useState([]);
-  const [recurrentes, setRecurrentes] = useState(RECURRENTES_DEFAULT);
+  const [recurrentes, setRecurrentes] = useState(() => usaPlantilla() ? RECURRENTES_DEFAULT : []);
   const [taxonomia, setTaxonomia] = useState(TAXONOMIA_DEFAULT);
   const [lpModel, setLpModel] = useState(LP_MODEL_VACIO);
   const [lpListo, setLpListo] = useState(false);
@@ -5907,7 +6231,7 @@ function App() {
       if (podadas > 0) saveState("martin:semana_overrides", SEMANA_OVERRIDES);
       RUTINA_GENERAL = await loadState("martin:rutina_general", []);
       const recsSaved = await loadState("martin:recurrentes", null);
-      RECURRENTES = recsSaved && Array.isArray(recsSaved) && recsSaved.length ? recsSaved : RECURRENTES_DEFAULT;
+      RECURRENTES = recsSaved && Array.isArray(recsSaved) && recsSaved.length ? recsSaved : usaPlantilla() ? RECURRENTES_DEFAULT : [];
       const taxSaved = await loadState("martin:taxonomia", null);
       const taxFinal = taxSaved && Array.isArray(taxSaved) && taxSaved.length ? taxSaved : TAXONOMIA_DEFAULT;
       let modelo = await loadState(LP_MODEL_KEY, null);
@@ -5972,7 +6296,7 @@ function App() {
         }));
         setSyncSource("json");
       } else {
-        objetivosFinales = OBJETIVOS_DEFAULT.map((o) => ({
+        objetivosFinales = (usaPlantilla() ? OBJETIVOS_DEFAULT : []).map((o) => ({
           ...o,
           completado: !!completados2[completadoKey(o)]
         }));
@@ -6458,7 +6782,7 @@ function App() {
       style: { bottom: "calc(1rem + env(safe-area-inset-bottom))" }
     },
     /* @__PURE__ */ React.createElement(Menu, { size: 20 })
-  ), headerAbierto ? /* @__PURE__ */ React.createElement("div", { className: "border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, "Mart\xEDn ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 2026")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(BackupControl, null), /* @__PURE__ */ React.createElement(
+  ), headerAbierto ? /* @__PURE__ */ React.createElement("div", { className: "border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, "Mart\xEDn ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 2026")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(UsuarioControl, null), /* @__PURE__ */ React.createElement(BackupControl, null), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: handleSync,
@@ -6582,16 +6906,20 @@ function App() {
   ), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState })), /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-6 text-center text-xs text-neutral-400" }, /* @__PURE__ */ React.createElement("span", { className: "font-serif italic" }, '"Detesto la mentira. Vivir en lo real."')))));
 }
 (function() {
-  function mount() {
+  function render() {
     var __root = ReactDOM.createRoot(document.getElementById("root"));
     __root.render(React.createElement(App));
-    if (window.JarvisSync) {
-      window.JarvisSync.montado();
-      window.JarvisSync.iniciar();
+    if (window.JarvisSync) window.JarvisSync.montado();
+  }
+  function mount() {
+    if (window.JarvisBackup && window.JarvisBackup.restoreSilent) {
+      window.JarvisBackup.restoreSilent().then(render, render);
+    } else {
+      render();
     }
   }
-  if (window.JarvisBackup && window.JarvisBackup.restoreSilent) {
-    window.JarvisBackup.restoreSilent().then(mount, mount);
+  if (window.JarvisSync && window.JarvisSync.arrancar) {
+    window.JarvisSync.arrancar(mount);
   } else {
     mount();
   }
