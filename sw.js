@@ -2,7 +2,7 @@
 // Estrategia: "la red primero, el cache como respaldo". Siempre intenta traer
 // la versión más nueva; si no hay señal, sirve la copia guardada. Así la app
 // abre sin internet y a la vez nunca queda congelada en una versión vieja.
-const CACHE = "jarvis-2553d42019";
+const CACHE = "jarvis-cb79db05e5";
 const ESENCIALES = [
   "./", "./index.html", "./manifest.json",
   "https://cdn.tailwindcss.com",

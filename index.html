@@ -187,8 +187,24 @@
       .opacity-0.group-hover\:opacity-100 { opacity: .65 !important; }
     }
 
+    /* ── Ancho siempre pegado a la pantalla ──────────────────────────────
+       Si algún elemento desborda a lo ancho, el navegador agranda el lienzo
+       y al alejar con zoom el contenido queda chico y pegado a la izquierda,
+       con una banda vacía al costado. Con esto el lienzo nunca supera la
+       pantalla: el contenido se adapta al ancho visible, con o sin zoom. */
+    html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+    #root { min-width: 0; max-width: 100%; }
+    #root img, #root svg, #root table { max-width: 100%; }
+
     /* ── Pantallas chicas ────────────────────────────────────────────── */
     @media (max-width: 767px) {
+      /* "I have a dream": las 4 columnas se deslizan hacia el costado con el
+         dedo. El ancho mínimo garantiza que la columna de objetivos tenga
+         lugar para el texto, la fecha y los botones de editar/eliminar. */
+      .lp-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -0.75rem; padding: 0 .75rem 6px; }
+      .lp-scroll .lp-min { min-width: 820px; }
+      .lp-scroll .lp-etiquetas { display: flex !important; }
+
       /* Piso de legibilidad: nada por debajo de 11px */
       .text-\[9px\], .text-\[10px\] { font-size: 11px !important; line-height: 1.35 !important; }
       .text-\[11px\] { font-size: 12px !important; }
@@ -847,6 +863,63 @@
         location.reload();
       }
 
+      // Marca del último "reset" del documento visto por ESTE aparato. Cuando
+      // un aparato declara "mis datos son la verdad" (reemplaza el documento
+      // entero), los demás tienen que tirar lo suyo y bajar todo de cero; si
+      // no, cualquier localStorage viejo resucitaría tareas borradas hace meses.
+      var RESET_VISTO = "jarvis:resetVisto";
+      function resetVisto() { try { return Number(localStorage.getItem(RESET_VISTO)) || 0; } catch (_) { return 0; } }
+      function marcarReset(t) { try { localStorage.setItem(RESET_VISTO, String(t)); } catch (_) {} }
+
+      // Reemplaza el documento ENTERO con lo que hay en este aparato (sin
+      // merge): todo lo acumulado en la nube que no esté acá, muere. Es la
+      // única forma de purgar datos viejos sin listarlos uno por uno.
+      function reemplazarNube() {
+        var t = Date.now();
+        var m = {}, datos = {};
+        clavesLocales().forEach(function (k) {
+          var v = localStorage.getItem(k);
+          if (v === null) return;
+          m[k] = t;
+          datos[k] = { v: v, t: t };
+        });
+        guardarMeta(m);
+        sucios = {};
+        marcarReset(t);
+        return ref.set({ datos: datos, device: deviceId(), updatedAt: t, reset: t });
+      }
+
+      // Pantalla de decisión: este aparato tiene datos de ANTES de las cuentas
+      // y la nube ya tiene datos de esta cuenta. Elegir mal pisa lo bueno, así
+      // que se pregunta en vez de adivinar.
+      function elegirOrigen(nLocales, nNube) {
+        return new Promise(function (resolver) {
+          var root = document.getElementById("root");
+          if (!root) { resolver("nube"); return; }
+          loginAbierto = true;
+          var fondo = "#0d0b07", tarjeta = "#14100a", borde = "#3a2f14", texto = "#EBCB6E", suave = "#8a7a4d";
+          root.innerHTML =
+            '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:' + fondo + ';padding:24px;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;z-index:100;">' +
+              '<div style="width:100%;max-width:420px;background:' + tarjeta + ';border:1px solid ' + borde + ';border-radius:18px;padding:30px 28px;text-align:left;">' +
+                '<div style="font-family:Georgia,serif;font-size:18px;font-weight:600;color:' + texto + ';">Hay dos versiones de tus datos</div>' +
+                '<div style="font-size:13px;color:' + suave + ';margin-top:10px;line-height:1.6;">' +
+                  'Este aparato tiene datos guardados de antes de que existieran las cuentas (' + nLocales + '), y tu cuenta ya tiene datos en la nube (' + nNube + '). Elegí cuál es la versión buena; la otra se descarta <b>de los dos lados</b>.' +
+                '</div>' +
+                '<button id="jarvis-origen-local" style="margin-top:20px;width:100%;padding:12px 16px;border-radius:11px;border:1px solid ' + borde + ';background:#1c160c;color:' + texto + ';font-size:14px;font-weight:500;cursor:pointer;text-align:left;">' +
+                  'Usar los datos de <b>este aparato</b><br><span style="font-size:11.5px;color:' + suave + ';font-weight:400;">Pisan la nube. Lo viejo acumulado en la nube se borra para siempre.</span>' +
+                '</button>' +
+                '<button id="jarvis-origen-nube" style="margin-top:10px;width:100%;padding:12px 16px;border-radius:11px;border:1px solid ' + borde + ';background:#1c160c;color:' + texto + ';font-size:14px;font-weight:500;cursor:pointer;text-align:left;">' +
+                  'Traer los datos de <b>la nube</b><br><span style="font-size:11.5px;color:' + suave + ';font-weight:400;">Lo guardado en este aparato se borra y se baja todo de la cuenta.</span>' +
+                '</button>' +
+              '</div>' +
+            '</div>';
+          var bl = document.getElementById("jarvis-origen-local");
+          var bn = document.getElementById("jarvis-origen-nube");
+          if (bl) bl.addEventListener("click", function () { resolver("local"); });
+          if (bn) bn.addEventListener("click", function () { resolver("nube"); });
+        });
+      }
+
       function entrar(user) {
         var uid = user.uid;
         var mail = (user.email || "").toLowerCase();
@@ -854,9 +927,14 @@
         ref = db.collection("jarvis").doc(uid);
 
         // ¿Está autorizada esta cuenta? La respuesta la da el servidor: si la
-        // regla la rechaza, esto tira "permission-denied".
+        // regla la rechaza, esto tira "permission-denied". El mismo viaje trae
+        // el documento, que hace falta para decidir el origen de los datos.
+        var docNube = null;
         return ref.get({ source: "server" })
-          .then(function () { return true; })
+          .then(function (snap) {
+            docNube = (snap && snap.exists && snap.data()) || null;
+            return true;
+          })
           .catch(function (e) {
             var c = (e && e.code) || "";
             if (c === "permission-denied") return false;
@@ -880,6 +958,35 @@
               var n = limpiarDatos();
               console.log("[Jarvis] otra cuenta en este navegador: borré " + n + " datos del anterior.");
             }
+
+            // Primer login de esta cuenta en este aparato, CON datos huérfanos
+            // (de antes de las cuentas) y CON nube no vacía: no se adivina.
+            // Adoptar lo local a ciegas fue lo que resucitó tareas de versiones
+            // viejas la última vez.
+            var datosNube = (docNube && docNube.datos) || {};
+            var clavesNube = Object.keys(datosNube).filter(function (k) { return esDato(k) && !datosNube[k].borrado; });
+            var huerfanas = previo ? [] : clavesLocales();
+            var decision = Promise.resolve(null);
+            if (!previo && huerfanas.length && clavesNube.length) {
+              decision = elegirOrigen(huerfanas.length + " datos", clavesNube.length + " datos");
+            } else if (!previo && clavesNube.length) {
+              // Sin datos locales: la nube manda, sin preguntar.
+              decision = Promise.resolve("nube");
+            }
+            return decision.then(function (eleccion) {
+              if (eleccion === "nube") {
+                limpiarDatos();
+                if (docNube && docNube.reset) marcarReset(docNube.reset);
+              }
+              var promesa = Promise.resolve();
+              if (eleccion === "local") promesa = reemplazarNube().catch(function (e) {
+                console.warn("[Jarvis] no pude reemplazar la nube, reintento como subida normal:", e);
+                adoptarTodo();
+              });
+              return promesa.then(function () { return continuar(); });
+            });
+
+            function continuar() {
             try {
               localStorage.setItem(OWNER, uid);
               localStorage.setItem(OWNER_MAIL, mail);
@@ -901,6 +1008,15 @@
             ref.onSnapshot(function (snap) {
               var d = (snap && snap.exists && snap.data()) || {};
               var propio = d.device === deviceId();
+              // Otro aparato reemplazó el documento entero ("mis datos son la
+              // verdad"): acá se tira todo lo local y se baja de cero. Sin esto,
+              // el localStorage viejo de este aparato volvería a subir tareas
+              // que el otro acaba de purgar.
+              if (d.reset && d.reset > resetVisto() && !propio) {
+                var borradas = limpiarDatos();
+                marcarReset(d.reset);
+                console.log("[Jarvis] otro aparato purgó la nube: descarté " + borradas + " datos locales y bajo todo de cero.");
+              }
               var cambios = reconciliar(d.datos || {});
               estado.ultima = new Date();
               if (estado.fase !== "subiendo") fase("ok");
@@ -911,6 +1027,7 @@
             });
 
             montarUnaVez();
+            }   // fin continuar()
           });
       }
 
@@ -979,6 +1096,19 @@
         // "iniciar" queda por compatibilidad: el botón de la nube lo llama
         // cuando está en error, y ahí lo más sano es recargar de cero.
         iniciar: function () { location.reload(); },
+        // Reparación manual desde la pestaña "Cuenta y datos":
+        // purgarNube → este aparato pisa el documento entero (con marca de
+        // reset, así los demás aparatos descartan lo suyo y bajan de cero).
+        // traerNube → este aparato tira lo local y baja todo de la cuenta.
+        purgarNube: function () {
+          if (!ref) return Promise.reject(new Error("no hay sesión iniciada"));
+          return reemplazarNube();
+        },
+        traerNube: function () {
+          limpiarDatos();
+          try { localStorage.removeItem(RESET_VISTO); } catch (_) {}
+          location.reload();
+        },
         usuario: function () { return window.JarvisUsuario || null; },
         estado: function () { return { fase: estado.fase, detalle: estado.detalle, ultima: estado.ultima, pendientes: estado.pendientes, uid: estado.uid }; },
         onEstado: function (cb) { oyentes.push(cb); cb(window.JarvisSync.estado()); },
@@ -1140,6 +1270,7 @@ const Download = LucideIcon("Download");
 const ArrowDownToLine = LucideIcon("ArrowDownToLine");
 const Rocket = LucideIcon("Rocket");
 const Pencil = LucideIcon("Pencil");
+const Database = LucideIcon("Database");
 const RUTINA_LABORAL_DEFAULT = [
   // ── MERCADO DE CAPITALES — 3 horas ──
   {
@@ -1463,7 +1594,8 @@ function setAreasVivas(tax) {
   AREAS_LIVE = (tax || []).filter((t) => t.area).map((t) => ({ key: t.area, color: t.color || getAreaColor(t.area) }));
 }
 function areasVivasLista() {
-  return AREAS_LIVE.length ? AREAS_LIVE : AREAS.map((a) => ({ key: a.key, color: a.color }));
+  if (AREAS_LIVE.length) return AREAS_LIVE;
+  return usaPlantilla() ? AREAS.map((a) => ({ key: a.key, color: a.color })) : [];
 }
 function areaObsoleta(area) {
   if (!area || AREAS_VIVAS.size === 0) return false;
@@ -5983,7 +6115,7 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
         setPadreNuevo(null);
       }
     }
-  )), /* @__PURE__ */ React.createElement(OrganizacionEditor, { modelo, aplicar }), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between", style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Trophy, { size: 15, style: { color: "var(--accent)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, "Avance general")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--accent)" } }, avanceGlobal, "%")), /* @__PURE__ */ React.createElement("div", { style: { height: 3, borderRadius: 999, background: "var(--col-2)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: avanceGlobal + "%", background: "var(--accent)" } })), cumplidos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--success)", background: "var(--success-bg)", borderRadius: 999, padding: "2px 8px", display: "inline-block", marginTop: 10 } }, cumplidos.length, " cumplido", cumplidos.length > 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex", style: { fontSize: 11, fontWeight: 400, color: "var(--text-muted)", paddingLeft: 4, gap: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_AREA, flexShrink: 0 } }, "\xC1rea"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SEC, flexShrink: 0 } }, "Secci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SUB, flexShrink: 0 } }, "Subsecci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Objetivos")), areas.map((a) => {
+  )), /* @__PURE__ */ React.createElement(OrganizacionEditor, { modelo, aplicar }), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between", style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Trophy, { size: 15, style: { color: "var(--accent)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, "Avance general")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--accent)" } }, avanceGlobal, "%")), /* @__PURE__ */ React.createElement("div", { style: { height: 3, borderRadius: 999, background: "var(--col-2)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: avanceGlobal + "%", background: "var(--accent)" } })), cumplidos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--success)", background: "var(--success-bg)", borderRadius: 999, padding: "2px 8px", display: "inline-block", marginTop: 10 } }, cumplidos.length, " cumplido", cumplidos.length > 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { className: "lp-scroll" }, /* @__PURE__ */ React.createElement("div", { className: "lp-min space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex lp-etiquetas", style: { fontSize: 11, fontWeight: 400, color: "var(--text-muted)", paddingLeft: 4, gap: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_AREA, flexShrink: 0 } }, "\xC1rea"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SEC, flexShrink: 0 } }, "Secci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SUB, flexShrink: 0 } }, "Subsecci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Objetivos")), areas.map((a) => {
     const secs = ordLP((modelo.secciones || []).filter((s) => s.areaId === a.id));
     const objsDirectos = ordLP(objetivos.filter((o) => o.padreTipo === "area" && o.padreId === a.id));
     const d = lpDescendientes(modelo, "area", a.id);
@@ -6087,7 +6219,7 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
       ...m,
       secciones: [...m.secciones, { id: uidLP("s"), areaId: a.id, nombre: "Nueva secci\xF3n", descripcion: "", orden: m.secciones.filter((x) => x.areaId === a.id).length }]
     })) }, "+ secci\xF3n")), /* @__PURE__ */ React.createElement("div", { className: "lp-hair-l", style: { flex: 1, background: "var(--col-4)" } })))));
-  }), areas.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: 32, fontSize: 13, color: "var(--text-muted)" } }, "No hay \xE1reas todav\xEDa. Cre\xE1 la primera en Organizaci\xF3n."), huerfanos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 12, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: "var(--col-2)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, "Sin \xE1rea"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-secondary)", marginTop: 2 } }, huerfanos.length, " ", huerfanos.length === 1 ? "objetivo qued\xF3" : "objetivos quedaron", " sin un \xE1rea existente. Reubicalos o eliminalos \u2014 no se van a borrar solos.")), /* @__PURE__ */ React.createElement("div", null, huerfanos.map((o) => /* @__PURE__ */ React.createElement("div", { key: o.id, className: "lp-row lp-hair-t", style: { padding: "8px 12px" } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2" }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, o.titulo), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, o.origenTexto ? "ven\xEDa de " + o.origenTexto : "sin procedencia registrada")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 shrink-0 flex-wrap", style: { justifyContent: "flex-end" } }, (o.hitos || []).length > 0 && /* @__PURE__ */ React.createElement(LpChip, { tono: "acento", mono: true }, /* @__PURE__ */ React.createElement(LpBarrita, { pct: Math.round((o.hitos || []).filter((h) => hitoCompleto(h)).length / (o.hitos || []).length * 100) }), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 6 } }, (o.hitos || []).filter((h) => hitoCompleto(h)).length, "/", (o.hitos || []).length)), o.fecha_objetivo && /* @__PURE__ */ React.createElement(LpChip, { mono: true }, fmtFechaLP(o.fecha_objetivo)), o.importancia && /* @__PURE__ */ React.createElement(LpPillPrioridad, { nivel: o.importancia })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-0.5 shrink-0" }, /* @__PURE__ */ React.createElement(LpIconBtn, { titulo: "Reubicar", onClick: () => setMoverObj(moverObj === o.id ? null : o.id) }, /* @__PURE__ */ React.createElement(ArrowDownToLine, { size: 13 })), /* @__PURE__ */ React.createElement(LpIconBtn, { peligro: true, titulo: "Eliminar objetivo", onClick: () => eliminarObjetivo(o.id) }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 })))), moverObj === o.id && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, /* @__PURE__ */ React.createElement(
+  }), areas.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: 32, fontSize: 13, color: "var(--text-muted)" } }, "No hay \xE1reas todav\xEDa. Cre\xE1 la primera en Organizaci\xF3n."))), huerfanos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 12, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: "var(--col-2)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, "Sin \xE1rea"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-secondary)", marginTop: 2 } }, huerfanos.length, " ", huerfanos.length === 1 ? "objetivo qued\xF3" : "objetivos quedaron", " sin un \xE1rea existente. Reubicalos o eliminalos \u2014 no se van a borrar solos.")), /* @__PURE__ */ React.createElement("div", null, huerfanos.map((o) => /* @__PURE__ */ React.createElement("div", { key: o.id, className: "lp-row lp-hair-t", style: { padding: "8px 12px" } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2" }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, o.titulo), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, o.origenTexto ? "ven\xEDa de " + o.origenTexto : "sin procedencia registrada")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 shrink-0 flex-wrap", style: { justifyContent: "flex-end" } }, (o.hitos || []).length > 0 && /* @__PURE__ */ React.createElement(LpChip, { tono: "acento", mono: true }, /* @__PURE__ */ React.createElement(LpBarrita, { pct: Math.round((o.hitos || []).filter((h) => hitoCompleto(h)).length / (o.hitos || []).length * 100) }), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 6 } }, (o.hitos || []).filter((h) => hitoCompleto(h)).length, "/", (o.hitos || []).length)), o.fecha_objetivo && /* @__PURE__ */ React.createElement(LpChip, { mono: true }, fmtFechaLP(o.fecha_objetivo)), o.importancia && /* @__PURE__ */ React.createElement(LpPillPrioridad, { nivel: o.importancia })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-0.5 shrink-0" }, /* @__PURE__ */ React.createElement(LpIconBtn, { titulo: "Reubicar", onClick: () => setMoverObj(moverObj === o.id ? null : o.id) }, /* @__PURE__ */ React.createElement(ArrowDownToLine, { size: 13 })), /* @__PURE__ */ React.createElement(LpIconBtn, { peligro: true, titulo: "Eliminar objetivo", onClick: () => eliminarObjetivo(o.id) }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 })))), moverObj === o.id && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, /* @__PURE__ */ React.createElement(
     MoverAPanelLP,
     {
       titulo: "Reubicar en",
@@ -6302,7 +6434,7 @@ function App() {
   const [bloquesHechos, setBloquesHechos] = useState({});
   const [rutinaGeneral, setRutinaGeneral] = useState([]);
   const [recurrentes, setRecurrentes] = useState(() => usaPlantilla() ? RECURRENTES_DEFAULT : []);
-  const [taxonomia, setTaxonomia] = useState(TAXONOMIA_DEFAULT);
+  const [taxonomia, setTaxonomia] = useState(() => usaPlantilla() ? TAXONOMIA_DEFAULT : []);
   const [lpModel, setLpModel] = useState(LP_MODEL_VACIO);
   const [lpListo, setLpListo] = useState(false);
   const [lpMigracionInfo, setLpMigracionInfo] = useState("");
@@ -6410,11 +6542,11 @@ function App() {
       const recsSaved = await loadState("martin:recurrentes", null);
       RECURRENTES = recsSaved && Array.isArray(recsSaved) && recsSaved.length ? recsSaved : usaPlantilla() ? RECURRENTES_DEFAULT : [];
       const taxSaved = await loadState("martin:taxonomia", null);
-      const taxFinal = taxSaved && Array.isArray(taxSaved) && taxSaved.length ? taxSaved : TAXONOMIA_DEFAULT;
+      const taxFinal = taxSaved && Array.isArray(taxSaved) && taxSaved.length ? taxSaved : usaPlantilla() ? TAXONOMIA_DEFAULT : [];
       let modelo = await loadState(LP_MODEL_KEY, null);
       if (!modelo || modelo.version !== 3 || !Array.isArray(modelo.areas)) {
         const lpSaved = await loadState("martin:lp_v1", null);
-        const lpBase = lpSaved && Array.isArray(lpSaved) && lpSaved.length ? lpSaved : window.OBJETIVOS_LP_DATA && window.OBJETIVOS_LP_DATA.objetivos || OBJETIVOS_LP_SEED.objetivos || [];
+        const lpBase = lpSaved && Array.isArray(lpSaved) && lpSaved.length ? lpSaved : usaPlantilla() ? window.OBJETIVOS_LP_DATA && window.OBJETIVOS_LP_DATA.objetivos || OBJETIVOS_LP_SEED.objetivos || [] : [];
         const antes = contarLegacy(taxFinal, lpBase);
         modelo = migrarModeloLP(taxFinal, lpBase);
         const despues = contarLP(modelo);
@@ -6881,11 +7013,18 @@ function App() {
   });
   const [headerAbierto, setHeaderAbierto] = useState(() => {
     try {
-      return localStorage.getItem("martin:header") !== "0";
+      return localStorage.getItem("martin:header") === "1";
     } catch (_) {
-      return true;
+      return false;
     }
   });
+  const nombreUsuario = (() => {
+    const n = window.JarvisUsuario && window.JarvisUsuario.nombre || "";
+    const primera = String(n).trim().split(/\s+/)[0] || "";
+    if (!primera) return "Jarvis";
+    return primera.charAt(0).toUpperCase() + primera.slice(1);
+  })();
+  const anioActual = (/* @__PURE__ */ new Date()).getFullYear();
   useEffect(() => {
     try {
       if (window.matchMedia("(max-width: 767px)").matches) return;
@@ -6907,7 +7046,8 @@ function App() {
     { key: "objetivos", label: "Obj. semanales", icon: Target },
     { key: "largoplazo", label: "I have a dream", icon: Trophy },
     { key: "whatsapp", label: "WhatsApp", icon: MessageCircle },
-    { key: "recordatorios", label: "Recordatorios", icon: Bell }
+    { key: "recordatorios", label: "Recordatorios", icon: Bell },
+    { key: "datos", label: "Cuenta y datos", icon: Database }
   ];
   return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen bg-[#faf6ec] dark:bg-[#0d0b07] text-neutral-900 dark:text-neutral-100" }, /* @__PURE__ */ React.createElement("style", null, `
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap');
@@ -6958,17 +7098,7 @@ function App() {
       className: "p-2 -ml-1 rounded-lg border border-neutral-200 dark:border-neutral-800 text-amber-600 dark:text-amber-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"
     },
     /* @__PURE__ */ React.createElement(Menu, { size: 20 })
-  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, "Mart\xEDn ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 2026")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(UsuarioControl, null), /* @__PURE__ */ React.createElement(BackupControl, null), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: handleSync,
-      disabled: isSyncing,
-      title: lastSync ? `\xDAltima sync: ${lastSync} \xB7 ${syncSource === "json" ? "Datos de archivos \u2705" : "\u26A0\uFE0F Datos hardcodeados \u2014 inici\xE1 sync_server.py"}` : "Sincronizar con Google Sheets (requiere sync_server.py corriendo)",
-      className: `flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${syncSource === "json" ? "border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 hover:bg-green-100 dark:hover:bg-green-950/50" : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`
-    },
-    /* @__PURE__ */ React.createElement("span", { className: `text-base ${isSyncing ? "animate-spin inline-block" : ""}` }, isSyncing ? "\u{1F504}" : syncSource === "json" ? "\u2705" : "\u26A0\uFE0F"),
-    /* @__PURE__ */ React.createElement("span", { className: `text-[9px] uppercase tracking-wide leading-none ${syncSource === "json" ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}` }, isSyncing ? "Sync..." : lastSync ? lastSync : syncSource === "json" ? "Synced" : "Sin sync")
-  ), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, nombreUsuario, " ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 ", anioActual)), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(UsuarioControl, null), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setHeaderAbierto(false),
@@ -6984,7 +7114,7 @@ function App() {
       className: "p-1.5 -ml-1 rounded-md text-amber-600 dark:text-amber-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"
     },
     /* @__PURE__ */ React.createElement(Menu, { size: 18 })
-  ), /* @__PURE__ */ React.createElement("span", { className: "font-serif text-sm font-medium text-amber-600 dark:text-amber-400" }, "Mart\xEDn"), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500 truncate" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" }))), /* @__PURE__ */ React.createElement("span", { className: "ml-auto flex items-center gap-2.5 text-[11px]" }, /* @__PURE__ */ React.createElement("span", { className: "text-red-600 font-medium", title: "Urgentes" }, urgentesCount), /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 font-medium", title: "Semanal" }, semanalCount), /* @__PURE__ */ React.createElement("span", { className: "text-green-600 font-medium", title: "Hechos" }, completados)), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("span", { className: "font-serif text-sm font-medium text-amber-600 dark:text-amber-400" }, nombreUsuario), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500 truncate" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" }))), /* @__PURE__ */ React.createElement("span", { className: "ml-auto flex items-center gap-2.5 text-[11px]" }, /* @__PURE__ */ React.createElement("span", { className: "text-red-600 font-medium", title: "Urgentes" }, urgentesCount), /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 font-medium", title: "Semanal" }, semanalCount), /* @__PURE__ */ React.createElement("span", { className: "text-green-600 font-medium", title: "Hechos" }, completados)), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setHeaderAbierto(true),
@@ -7087,7 +7217,41 @@ function App() {
       agregarObjetivoSemanal,
       migracionInfo: lpMigracionInfo
     }
-  ), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState })), /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-6 text-center text-xs text-neutral-400" }, /* @__PURE__ */ React.createElement("span", { className: "font-serif italic" }, '"Detesto la mentira. Vivir en lo real."')))));
+  ), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Copias de seguridad, sincronizaci\xF3n con Sheets y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Copia de seguridad en archivo"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Conect\xE1 una carpeta para respaldo autom\xE1tico, o hac\xE9 una copia manual para descargar / importar."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(BackupControl, null))), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Sincronizaci\xF3n con Google Sheets"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Trae la rutina y los objetivos desde los archivos generados por los skills (requiere sync_server.py en la PC).", lastSync ? " \xDAltima sync: " + lastSync + "." : ""), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: handleSync,
+      disabled: isSyncing,
+      className: `flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors disabled:opacity-50 ${syncSource === "json" ? "border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 hover:bg-green-100 dark:hover:bg-green-950/50" : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`
+    },
+    /* @__PURE__ */ React.createElement("span", { className: isSyncing ? "animate-spin inline-block" : "" }, isSyncing ? "\u{1F504}" : syncSource === "json" ? "\u2705" : "\u26A0\uFE0F"),
+    /* @__PURE__ */ React.createElement("span", null, isSyncing ? "Sincronizando\u2026" : syncSource === "json" ? "Volver a sincronizar" : "Sincronizar (datos hardcodeados ahora)")
+  )), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Tu cuenta en la nube"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Si en alg\xFAn aparato aparecen tareas viejas que ya hab\xEDas borrado, es porque la nube acumul\xF3 datos de versiones anteriores. Eleg\xED desde el aparato que tiene la ", /* @__PURE__ */ React.createElement("b", null, "versi\xF3n buena"), ":"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        if (!window.confirm("Esto reemplaza TODO lo guardado en la nube con lo que hay en este aparato. Lo viejo acumulado se borra para siempre y los dem\xE1s aparatos van a bajar esta versi\xF3n. \xBFSeguro?")) return;
+        window.JarvisSync.purgarNube().then(
+          () => alert("Listo: la nube ahora es una copia exacta de este aparato. Los dem\xE1s aparatos se van a alinear solos al abrir."),
+          (e) => alert("No pude purgar la nube: " + (e && e.message || "sin conexi\xF3n o sin sesi\xF3n."))
+        );
+      },
+      className: "w-full text-left px-3 py-2.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/40 text-sm"
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 500 } }, "Este aparato manda"),
+    /* @__PURE__ */ React.createElement("span", { className: "block text-[11.5px] text-neutral-500 mt-0.5" }, "Sube lo de ac\xE1 como \xFAnica verdad y purga todo lo viejo de la nube. Usalo desde la PC con tu \xFAltima versi\xF3n.")
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        if (!window.confirm("Esto borra lo guardado en ESTE aparato y baja todo de la nube. \xBFSeguro?")) return;
+        window.JarvisSync.traerNube();
+      },
+      className: "w-full text-left px-3 py-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900 text-sm"
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 500 } }, "La nube manda"),
+    /* @__PURE__ */ React.createElement("span", { className: "block text-[11.5px] text-neutral-500 mt-0.5" }, "Descarta lo local de este aparato y trae la versi\xF3n guardada en tu cuenta.")
+  ))))), /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-6 text-center text-xs text-neutral-400" }, /* @__PURE__ */ React.createElement("span", { className: "font-serif italic" }, '"Detesto la mentira. Vivir en lo real."')))));
 }
 (function() {
   function render() {
