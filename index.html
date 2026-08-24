@@ -245,7 +245,22 @@
         width: calc(100vw - 24px) !important;
         max-width: 360px;
         margin-top: 0 !important;
-        z-index: 70;
+        /* Fondo y capa PROPIOS, no heredados de las clases de utilidad: si no,
+           el contenido de atrás se leía a través del panel y se mezclaba con
+           los botones. Con z-index alto queda siempre por encima de todo. */
+        z-index: 210 !important;
+        background: #ffffff !important;
+        box-shadow: 0 -8px 40px rgba(0,0,0,.55) !important;
+      }
+      .dark .jarvis-popover { background: #171310 !important; }
+
+      /* Telón detrás del panel: lo despega visualmente de la lista y, al
+         tocarlo, lo cierra. En escritorio no existe. */
+      .jarvis-popover-fondo {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        background: rgba(0,0,0,.55);
       }
 
       /* Acciones que en escritorio aparecen al pasar el mouse. En pantalla
@@ -262,7 +277,7 @@
       .jarvis-sidebar-cerrada { transform: translateX(-100%); }
       .jarvis-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,.45); }
     }
-    @media (min-width: 768px) { .jarvis-backdrop, .jarvis-fab { display: none !important; } }
+    @media (min-width: 768px) { .jarvis-backdrop, .jarvis-fab, .jarvis-popover-fondo { display: none !important; } }
   </style>
 
   <!-- Shim: window.storage sobre localStorage -->
@@ -523,6 +538,10 @@
       var DUENO = "gomezpizarromartin@gmail.com";   // la cuenta que ve los datos precargados
       var OWNER = "jarvis:owner";                   // uid dueño del localStorage de este navegador
       var OWNER_MAIL = "jarvis:ownerMail";
+      // El nombre lindo que da Google. Se guarda al entrar para que, cuando se
+      // abra sin internet, el encabezado siga diciendo "Martín" y no el pedazo
+      // de mail ("Gomezpizarromartin").
+      var OWNER_NAME = "jarvis:ownerName";
 
       // Preferencias de ESTE aparato: no se sincronizan a propósito.
       // (el celular quiere la barra cerrada y la compu abierta)
@@ -865,8 +884,12 @@
       // YA entró en este aparato, el dashboard tiene que seguir abriendo:
       // guarda todo local y sube cuando vuelva la señal.
       function modoLocal(motivo) {
-        var dueno = null, mail = null;
-        try { dueno = localStorage.getItem(OWNER); mail = localStorage.getItem(OWNER_MAIL); } catch (_) {}
+        var dueno = null, mail = null, nombreGuardado = null;
+        try {
+          dueno = localStorage.getItem(OWNER);
+          mail = localStorage.getItem(OWNER_MAIL);
+          nombreGuardado = localStorage.getItem(OWNER_NAME);
+        } catch (_) {}
         if (!dueno) {
           mostrarLogin({
             aviso: "La primera vez necesitás conexión para entrar con Google. Después la sesión queda guardada y el dashboard abre sin internet."
@@ -875,7 +898,7 @@
         }
         estado.uid = dueno;
         window.JARVIS_PLANTILLA = (mail === DUENO);
-        window.JarvisUsuario = { nombre: (mail || "").split("@")[0], email: mail || "", foto: "", salir: salir };
+        window.JarvisUsuario = { nombre: nombreGuardado || (mail || "").split("@")[0], email: mail || "", foto: "", salir: salir };
         fase("error", motivo || "sin conexión");
         montarUnaVez();
       }
@@ -1017,6 +1040,8 @@
             try {
               localStorage.setItem(OWNER, uid);
               localStorage.setItem(OWNER_MAIL, mail);
+              if (user.displayName) localStorage.setItem(OWNER_NAME, user.displayName);
+              else localStorage.removeItem(OWNER_NAME);
             } catch (_) {}
 
             // Sólo la cuenta dueña ve la rutina y los objetivos precargados;
@@ -1205,15 +1230,47 @@
         } else porPagina();
       }
 
+      // Agenda de HOY publicada por el dashboard (React). Sirve para el modo
+      // "avisarme de todo" sin volver a escribir acá la lógica de
+      // buildDayAgenda: React ya la calcula una vez y la deja acá.
+      var agendaDia = { dia: null, items: [] };
+
+      // Lo que hay que avisar hoy = las marcas de la campanita + (si el modo
+      // "todo" está prendido) cada actividad con horario de la agenda del día.
+      // Se deduplica por hora+título para que una actividad marcada a mano no
+      // avise dos veces.
+      function pendientesHoy() {
+        var c = cfg(), hk = hoyKey();
+        var mudos = c.mudos || {};
+        var salida = [], vistos = {};
+        function sumar(clave, m) {
+          if (!m || !m.hora || mudos[clave]) return;
+          var firma = m.hora + "|" + (m.titulo || "");
+          if (vistos[firma]) return;
+          vistos[firma] = 1;
+          salida.push({ clave: clave, m: m });
+        }
+        var marcas = c.marcas || {};
+        Object.keys(marcas).forEach(function (k) {
+          if (marcas[k] && marcas[k].dia === hk) sumar(k, marcas[k]);
+        });
+        if (c.todo && agendaDia.dia === hk) {
+          agendaDia.items.forEach(function (it) {
+            sumar("auto::" + it.id, { titulo: it.titulo, hora: it.hora, area: it.area, dia: hk });
+          });
+        }
+        salida.sort(function (a, b) { return aMin(a.m.hora) - aMin(b.m.hora); });
+        return salida;
+      }
+
       function tick() {
         if (!("Notification" in window) || Notification.permission !== "granted") return;
-        var c = cfg(), marcas = c.marcas || {};
+        var c = cfg();
         var ant = (c.anticipacion == null ? 10 : +c.anticipacion);
-        var hk = hoyKey(), f = fechaHoy(), ahora = minAhora();
+        var f = fechaHoy(), ahora = minAhora();
         var av = avisadas(), cambio = false;
-        Object.keys(marcas).forEach(function (k) {
-          var m = marcas[k];
-          if (!m || !m.hora || m.dia !== hk) return;
+        pendientesHoy().forEach(function (p) {
+          var k = p.clave, m = p.m;
           var objetivo = aMin(m.hora) - ant;
           var id = k + "|" + f;
           if (av[id]) return;
@@ -1248,6 +1305,24 @@
         lista: function () { var c = cfg(); return c.marcas || {}; },
         anticipacion: function () { var c = cfg(); return c.anticipacion == null ? 10 : +c.anticipacion; },
         setAnticipacion: function (n) { var c = cfg(); c.anticipacion = Math.max(0, Math.min(120, +n || 0)); guardar(c); },
+        // Modo "avisarme de TODAS las actividades del día" (rutina, semana,
+        // objetivos y lo que se agregue en Mi día). Viaja con la nube.
+        todo: function () { return !!cfg().todo; },
+        setTodo: function (v) { var c = cfg(); c.todo = !!v; guardar(c); setTimeout(tick, 200); },
+        // React publica acá la agenda de hoy ya resuelta.
+        setAgendaHoy: function (dia, items) {
+          agendaDia = { dia: dia, items: (items || []).filter(function (i) { return i && i.hora; }) };
+          setTimeout(tick, 200);
+        },
+        // Lo que va a sonar hoy, ya combinado y ordenado (para la pantalla).
+        pendientes: function () { return pendientesHoy(); },
+        silenciar: function (clave) {
+          var c = cfg();
+          if (clave.indexOf("auto::") === 0) { c.mudos = c.mudos || {}; c.mudos[clave] = 1; }
+          else if (c.marcas) { delete c.marcas[clave]; }
+          guardar(c);
+        },
+        reactivarTodo: function () { var c = cfg(); c.mudos = {}; guardar(c); },
         onCambio: function (f) { oyentes.push(f); },
         probar: function () { mostrar("Jarvis, a sus órdenes", "Así se van a ver los avisos de sus actividades."); }
       };
@@ -2063,7 +2138,8 @@ function AssignPopover({ objetivo, onAsignar, onClose }) {
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
   }, []);
-  return /* @__PURE__ */ React.createElement(
+  const nombreObj = (objetivo.tarea || objetivo.subseccion || objetivo.seccion || "").trim();
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "jarvis-popover-fondo", onClick: onClose }), /* @__PURE__ */ React.createElement(
     "div",
     {
       ref,
@@ -2072,6 +2148,7 @@ function AssignPopover({ objetivo, onAsignar, onClose }) {
       onClick: (e) => e.stopPropagation()
     },
     /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide mb-2 flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(CalendarPlus, { size: 12 }), " Asignar d\xEDa y hora"),
+    nombreObj && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-700 dark:text-neutral-300 font-medium mb-2 line-clamp-2 leading-snug" }, nombreObj),
     /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-4 gap-1 mb-2.5" }, DIAS.map((d) => /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -2119,7 +2196,7 @@ function AssignPopover({ objetivo, onAsignar, onClose }) {
       },
       "\u2715"
     ))
-  );
+  ));
 }
 function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: objetivosVistaProp, setObjetivos, onToggleRecurrente, checklists, setChecklists, weekDates, rutinaTick, asignarObjetivo, onEditarBloque, onAgregarBloque, esBloqueHecho, toggleBloqueHecho, taxonomia }) {
   const vista = useMemo(
@@ -3918,6 +3995,63 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
     "Cancelar"
   )));
 }
+function icsEscapar(s) {
+  return String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+}
+function icsFecha(d, flotante) {
+  const p = (n) => ("0" + n).slice(-2);
+  if (flotante) {
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "T" + p(d.getHours()) + p(d.getMinutes()) + "00";
+  }
+  return d.getUTCFullYear() + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + "T" + p(d.getUTCHours()) + p(d.getUTCMinutes()) + p(d.getUTCSeconds()) + "Z";
+}
+function armarICSSemana(objetivos, anticipacion) {
+  const DIAS2 = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const BYDAY = { Sunday: "SU", Monday: "MO", Tuesday: "TU", Wednesday: "WE", Thursday: "TH", Friday: "FR", Saturday: "SA" };
+  const ahora = /* @__PURE__ */ new Date();
+  const semKey = semanaKeyDe(ahora);
+  const L = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Jarvis//Rutina//ES",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "X-WR-CALNAME:Jarvis \u2014 Rutina"
+  ];
+  let cuantos = 0;
+  DIAS2.forEach((dk, idx) => {
+    const base = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
+    base.setDate(base.getDate() + (idx - base.getDay() + 7) % 7);
+    let agenda = [];
+    try {
+      agenda = buildDayAgenda(dk, objetivos || [], semKey) || [];
+    } catch (_) {
+      agenda = [];
+    }
+    agenda.filter((x) => x.hora).forEach((x) => {
+      const [hh, mm] = String(x.hora).split(":").map(Number);
+      const ini = new Date(base.getFullYear(), base.getMonth(), base.getDate(), hh || 0, mm || 0, 0);
+      const fin = new Date(ini.getTime() + (x.duracion || 30) * 6e4);
+      cuantos++;
+      L.push("BEGIN:VEVENT");
+      L.push("UID:jarvis-" + dk + "-" + String(x.id).replace(/[^a-zA-Z0-9-]/g, "") + "@jarvis.martin");
+      L.push("DTSTAMP:" + icsFecha(/* @__PURE__ */ new Date(), false));
+      L.push("DTSTART:" + icsFecha(ini, true));
+      L.push("DTEND:" + icsFecha(fin, true));
+      L.push("RRULE:FREQ=WEEKLY;BYDAY=" + BYDAY[dk]);
+      L.push("SUMMARY:" + icsEscapar(x.titulo));
+      if (x.area) L.push("DESCRIPTION:" + icsEscapar(x.area));
+      L.push("BEGIN:VALARM");
+      L.push("TRIGGER:-PT" + Math.max(0, anticipacion || 0) + "M");
+      L.push("ACTION:DISPLAY");
+      L.push("DESCRIPTION:" + icsEscapar(x.titulo));
+      L.push("END:VALARM");
+      L.push("END:VEVENT");
+    });
+  });
+  L.push("END:VCALENDAR");
+  return { texto: L.join("\r\n"), cuantos };
+}
 function Recordatorios({ objetivos, feedback, setFeedback }) {
   const [canalConfig, setCanalConfigState] = useState({ tipo: "whatsapp", numero: "", telegramId: "" });
   const [editingArea, setEditingArea] = useState(null);
@@ -3977,15 +4111,27 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
   const notifPermiso = window.JarvisNotif ? window.JarvisNotif.permiso() : "no-soportado";
   const notifMarcas = window.JarvisNotif ? window.JarvisNotif.lista() : {};
   const notifClaves = Object.keys(notifMarcas);
+  const notifPendientes = window.JarvisNotif && window.JarvisNotif.pendientes ? window.JarvisNotif.pendientes() : [];
   const DIA_ES = { Sunday: "Dom", Monday: "Lun", Tuesday: "Mar", Wednesday: "Mi\xE9", Thursday: "Jue", Friday: "Vie", Saturday: "S\xE1b" };
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Marc\xE1 la campanita \u{1F514} de cualquier actividad en ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), " y el navegador avisa antes de que empiece. Funciona mientras el dashboard o la app est\xE9n abiertos. Las marcas se sincronizan entre tus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Prend\xE9 ", /* @__PURE__ */ React.createElement("b", null, "\xABAvisarme de todas las actividades del d\xEDa\xBB"), " y suena cada bloque con horario \u2014 venga de la rutina, de lo que mov\xE9s en la semana, de un objetivo semanal o de algo que agregues en Mi d\xEDa. Si prefer\xEDs elegir de a una, marc\xE1 la campanita \u{1F514} en ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), ". Funciona mientras el dashboard o la app est\xE9n abiertos; para que avise con todo cerrado, us\xE1 el bot\xF3n del Calendario de m\xE1s abajo. La configuraci\xF3n se sincroniza entre tus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => window.JarvisNotif.pedirPermiso().then(() => setNotifTick((t) => t + 1)),
       className: "px-3 py-1.5 rounded-md text-xs font-medium bg-amber-600 text-white hover:bg-amber-700"
     },
     "Permitir notificaciones en este aparato"
-  ) : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-neutral-600 dark:text-neutral-400 flex items-center gap-2" }, "Avisar", /* @__PURE__ */ React.createElement(
+  ) : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("label", { className: "flex items-start gap-2 text-xs cursor-pointer select-none" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "checkbox",
+      checked: window.JarvisNotif.todo(),
+      onChange: (e) => {
+        window.JarvisNotif.setTodo(e.target.checked);
+        setNotifTick((t) => t + 1);
+      },
+      className: "mt-0.5 accent-amber-600"
+    }
+  ), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("b", null, "Avisarme de todas las actividades del d\xEDa"), /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] text-neutral-500 leading-snug" }, "Rutina, semana, objetivos semanales y Mi d\xEDa \u2014 todo lo que tenga horario.", notifPendientes.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, " Hoy son ", /* @__PURE__ */ React.createElement("b", null, notifPendientes.length), " avisos.")))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-neutral-600 dark:text-neutral-400 flex items-center gap-2" }, "Avisar", /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -4005,21 +4151,40 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
       className: "px-3 py-1.5 rounded-md text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40"
     },
     "Probar un aviso"
-  )), notifClaves.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-400" }, "Todav\xEDa no marcaste ninguna actividad. La campanita est\xE1 en cada actividad de ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), ", al lado del lapicito.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, notifClaves.sort((a, b) => (notifMarcas[a].hora || "").localeCompare(notifMarcas[b].hora || "")).map((k) => {
-    const m = notifMarcas[k];
-    return /* @__PURE__ */ React.createElement("div", { key: k, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-2.5 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-amber-600 shrink-0" }, DIA_ES[m.dia] || m.dia, " ", m.hora), /* @__PURE__ */ React.createElement("span", { className: "truncate flex-1" }, m.titulo), /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        onClick: () => {
-          window.JarvisNotif.desmarcar(k);
-          setNotifTick((t) => t + 1);
-        },
-        title: "Silenciar",
-        className: "text-neutral-300 hover:text-red-500 shrink-0"
+  )), notifPendientes.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-400" }, "Hoy no hay ning\xFAn aviso programado. Prend\xE9 la casilla de arriba, o marc\xE1 la campanita \u{1F514} de una actividad en ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), " (al lado del lapicito).") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500" }, "Avisos de hoy (", notifPendientes.length, ") \u2014 la \u2715 silencia uno:"), notifPendientes.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.clave, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-2.5 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-amber-600 shrink-0" }, DIA_ES[p.m.dia] || p.m.dia, " ", p.m.hora), /* @__PURE__ */ React.createElement("span", { className: "truncate flex-1" }, p.m.titulo), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        window.JarvisNotif.silenciar(p.clave);
+        setNotifTick((t) => t + 1);
       },
-      /* @__PURE__ */ React.createElement(X, { size: 13 })
-    ));
-  })))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-3" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-emerald-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Canal de recordatorios")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-2" }, /* @__PURE__ */ React.createElement(
+      title: "Silenciar",
+      className: "text-neutral-300 hover:text-red-500 shrink-0"
+    },
+    /* @__PURE__ */ React.createElement(X, { size: 13 })
+  ))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        window.JarvisNotif.reactivarTodo();
+        setNotifTick((t) => t + 1);
+      },
+      className: "text-[11px] text-neutral-400 hover:text-amber-600 underline"
+    },
+    "Reactivar los silenciados"
+  )), /* @__PURE__ */ React.createElement("div", { className: "pt-3 mt-1 border-t border-amber-200/60 dark:border-amber-900/40" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 leading-snug mb-2" }, /* @__PURE__ */ React.createElement("b", null, "\xBFAvisos con la app cerrada?"), " El navegador no puede; el Calendario del celular s\xED. Baj\xE1 la semana como eventos con alarma y subila una sola vez en Google Calendar (", /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap" }, "Configuraci\xF3n \u203A Importar y exportar"), "). Quedan como eventos ", /* @__PURE__ */ React.createElement("b", null, "semanales"), ": se importa una vez y avisa todas las semanas."), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        const { texto, cuantos } = armarICSSemana(objetivos, window.JarvisNotif.anticipacion());
+        descargarArchivo(texto, "jarvis-rutina.ics", "text/calendar;charset=utf-8");
+        alert(cuantos + " actividades listas para importar en el Calendario.\n\nEn la computadora: calendar.google.com \u203A \u2699 Configuraci\xF3n \u203A Importar y exportar \u203A eleg\xED jarvis-rutina.ics.\nConviene importarlo en un calendario aparte para poder apagarlo de un toque.");
+      },
+      className: "px-3 py-1.5 rounded-md text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 inline-flex items-center gap-1.5"
+    },
+    /* @__PURE__ */ React.createElement(CalendarPlus, { size: 13 }),
+    " Bajar la semana para el Calendario (.ics)"
+  )))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-3" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-emerald-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Canal de recordatorios")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setCanalConfig({ ...canalConfig, tipo: "whatsapp" }),
@@ -7178,6 +7343,17 @@ function App() {
   }, [aplicarLP]);
   const recurrentesSemana = useMemo(() => recurrentesComoObjetivos(recurrentes, now), [recurrentes, now]);
   const objetivosVista = useMemo(() => [...objetivos, ...recurrentesSemana], [objetivos, recurrentesSemana]);
+  const hoyKeyApp = currentDayKey(now);
+  useEffect(() => {
+    if (!window.JarvisNotif || !loaded) return;
+    try {
+      const sem = semanaKeyDe(/* @__PURE__ */ new Date());
+      const vig = objetivosVigentes(objetivosVista, taxonomia);
+      const items = buildDayAgenda(hoyKeyApp, vig, sem).filter((x) => x.hora).map((x) => ({ id: x.id, titulo: x.titulo, hora: x.hora, area: x.area, duracion: x.duracion }));
+      window.JarvisNotif.setAgendaHoy(hoyKeyApp, items);
+    } catch (_) {
+    }
+  }, [hoyKeyApp, objetivosVista, taxonomia, rutinaTick, loaded]);
   useEffect(() => {
     if (!loaded || manuales.length === 0) return;
     const porId = {};
