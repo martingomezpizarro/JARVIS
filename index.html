@@ -1233,12 +1233,19 @@
       function tick() {
         if (!("Notification" in window) || Notification.permission !== "granted") return;
         var c = cfg(), marcas = c.marcas || {};
-        var ant = (c.anticipacion == null ? 10 : +c.anticipacion);
+        var antGral = (c.anticipacion == null ? 10 : +c.anticipacion);
         var hk = hoyKey(), f = fechaHoy(), ahora = minAhora();
         var av = avisadas(), cambio = false;
         Object.keys(marcas).forEach(function (k) {
           var m = marcas[k];
-          if (!m || !m.hora || m.dia !== hk) return;
+          if (!m || !m.hora) return;
+          // Un evento con fecha propia (un turno, una rendida) avisa ese día y
+          // nada más. Lo demás —rutina, objetivos— avisa todas las semanas.
+          if (m.fecha) { if (m.fecha !== f) return; }
+          else if (m.dia !== hk) return;
+          // Cada actividad puede tener su propia anticipación; si no la puso,
+          // manda la general de la pestaña Recordatorios.
+          var ant = (m.ant === 0 || m.ant) ? +m.ant : antGral;
           var objetivo = aMin(m.hora) - ant;
           var id = k + "|" + f;
           if (av[id]) return;
@@ -1483,6 +1490,7 @@ let RUTINA_OVERRIDES = {};
 let BLOQUES_CUSTOM = {};
 let SEMANA_OVERRIDES = {};
 let RUTINA_GENERAL = [];
+let EVENTOS = [];
 let RECURRENTES = [];
 function itemTitulo(x) {
   return x.tarea || x.subseccion || x.seccion || x.titulo || x.categoria || x.area || "\u2014";
@@ -1696,6 +1704,25 @@ function getInicioDeSemana(date) {
   return d;
 }
 const getMondayOfWeek = getInicioDeSemana;
+function inicioSemanaLunes(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - (d.getDay() + 6) % 7);
+  return d;
+}
+function fechaISOde(date) {
+  const d = new Date(date);
+  const p = (n) => ("0" + n).slice(-2);
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function fechaDeISO(iso) {
+  const [y, m, d] = String(iso || "").split("-").map(Number);
+  if (!y) return /* @__PURE__ */ new Date();
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+function fechaLarga(iso) {
+  return fechaDeISO(iso).toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+}
 function getWeekDates(date) {
   const inicio = getInicioDeSemana(date);
   return Array.from({ length: 7 }, (_, i) => {
@@ -1722,7 +1749,7 @@ function bloqueEsDeSemana(dayKey, blockId) {
   const b = bloqueCustomDe(dayKey, blockId);
   return !!(b && b.origen === "semana");
 }
-function buildDayAgenda(dayKey, objetivos, semKey) {
+function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
   const items = [];
   Object.entries(RUTINA_EXTRAS).forEach(([key, val]) => {
     const [d, h] = key.split("-");
@@ -1867,6 +1894,30 @@ function buildDayAgenda(dayKey, objetivos, semKey) {
       subtareas: (b.subtareas || []).map((s, i) => typeof s === "string" ? { id: `csub-${i}`, titulo: s } : { id: s.id || `csub-${i}`, ...s })
     });
   });
+  if (fechaISO) {
+    (EVENTOS || []).forEach((ev) => {
+      if (!ev || ev.fecha !== fechaISO || !ev.hora) return;
+      items.push({
+        id: ev.id,
+        hora: ev.hora,
+        duracion: ev.duracion || 60,
+        titulo: itemTitulo(ev),
+        subarea: ev.seccion || ev.subseccion || ev.categoria,
+        area: ev.categoria,
+        categoria: ev.categoria,
+        seccion: ev.seccion,
+        subseccion: ev.subseccion,
+        tipo: "evento",
+        // Manda sobre la rutina, igual que un objetivo con hora: si hay un
+        // turno a las 10, el bloque estructural le cede la franja.
+        prioritario: true,
+        eventoId: ev.id,
+        fecha: ev.fecha,
+        descripcion: ev.descripcion || "",
+        subtareas: (ev.subtareas || []).map((x, i) => typeof x === "string" ? { id: `evs-${i}`, titulo: x } : { id: x.id || `evs-${i}`, ...x })
+      });
+    });
+  }
   const finales = [];
   items.forEach((it) => {
     const ov = RUTINA_OVERRIDES[dayKey + "::" + it.id];
@@ -2155,7 +2206,11 @@ function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: ob
     [objetivosVistaProp, objetivos, taxonomia]
   );
   const semKey = semanaKeyDe(now);
-  const agenda = useMemo(() => buildDayAgenda(selectedDay, vista, semKey), [selectedDay, vista, rutinaTick, semKey]);
+  const fechaSel = useMemo(() => {
+    const i = DIAS.findIndex((d) => d.key === selectedDay);
+    return weekDates && weekDates[i] ? fechaISOde(weekDates[i]) : null;
+  }, [selectedDay, weekDates]);
+  const agenda = useMemo(() => buildDayAgenda(selectedDay, vista, semKey, fechaSel), [selectedDay, vista, rutinaTick, semKey, fechaSel]);
   const [addForm, setAddForm] = useState(false);
   const [editObjetivo, setEditObjetivo] = useState(null);
   const seccionesPorCategoria = useMemo(() => {
@@ -2336,7 +2391,10 @@ function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: ob
     DIAS[dayIdx].full.toLowerCase()
   )));
 }
-function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, alcanceSemanal, onVolverARutina, seccion }) {
+function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, alcanceSemanal, onVolverARutina, seccion, notifClave, notifDia }) {
+  const avIni = avisoDe(notifClave);
+  const [avisar, setAvisar] = useState(avIni.avisar);
+  const [antAviso, setAntAviso] = useState(avIni.ant);
   const [hora, setHora] = useState(inicial.hora || "12:00");
   const [duracion, setDuracion] = useState(inicial.duracion || 30);
   const [titulo, setTitulo] = useState(inicial.titulo || "");
@@ -2347,7 +2405,7 @@ function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, a
   const durLabel = (d) => d >= 60 ? `${Math.floor(d / 60)}h${d % 60 ? ` ${d % 60}'` : ""}` : `${d}'`;
   const inputCls = "px-2.5 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm";
   function armarCambios() {
-    const cambios = { hora, duracion, titulo, area };
+    const cambios = { hora, duracion, titulo, area, _aviso: { avisar: !!avisar, ant: antAviso } };
     if (subText !== origSub) {
       cambios.subtareas = subText.split("\n").map((s) => s.trim()).filter(Boolean).map((t, i) => ({ id: "st-" + i, titulo: t }));
     }
@@ -2370,6 +2428,7 @@ function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, a
         className: `${inputCls} w-full font-mono text-xs`
       }
     )),
+    /* @__PURE__ */ React.createElement(CampoAviso, { avisar, setAvisar, ant: antAviso, setAnt: setAntAviso, hayHora: !!hora }),
     /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -2395,6 +2454,144 @@ function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, a
     ), /* @__PURE__ */ React.createElement("button", { onClick: onCancelar, className: "px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm" }, "Cancelar")),
     /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400" }, alcanceSemanal ? "Vale SOLO para esta semana: la actividad queda concretada ac\xE1 y en Rutina la secci\xF3n sigue igual. La semana que viene vuelve a la estructura general." : "La edici\xF3n aplica solo a este d\xEDa del calendario semanal. El Sheets sigue siendo la fuente al sincronizar; tus ediciones se re-aplican encima.")
   );
+}
+function avisoDe(clave) {
+  const N = window.JarvisNotif;
+  if (!N || !clave) return { avisar: false, ant: null };
+  const m = N.lista()[clave];
+  return { avisar: !!m, ant: m && (m.ant === 0 || m.ant) ? +m.ant : null };
+}
+function aplicarAviso(clave, datos, aviso) {
+  const N = window.JarvisNotif;
+  if (!N || !clave) return;
+  const ok = aviso && aviso.avisar && datos && datos.hora && (datos.dia || datos.fecha);
+  if (!ok) {
+    N.desmarcar(clave);
+    return;
+  }
+  N.marcar(clave, {
+    titulo: datos.titulo || "Actividad",
+    hora: datos.hora,
+    dia: datos.dia || null,
+    fecha: datos.fecha || null,
+    area: datos.area || "",
+    duracion: datos.duracion || 30,
+    ant: aviso.ant === 0 || aviso.ant ? +aviso.ant : null
+  });
+}
+function CampoAviso({ avisar, setAvisar, ant, setAnt, hayHora, nota }) {
+  const N = window.JarvisNotif;
+  const [permiso, setPermiso] = useState(N && N.soportado() ? N.permiso() : "no-soportado");
+  if (!N || !N.soportado()) return null;
+  const general = N.anticipacion();
+  function toggle(v) {
+    setAvisar(v);
+    if (v && N.permiso() !== "granted") {
+      N.pedirPermiso().then((p) => {
+        setPermiso(p);
+        if (p !== "granted") setAvisar(false);
+      });
+    }
+  }
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/60 dark:bg-amber-950/20 px-2.5 py-2" }, /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-2 text-xs ${hayHora ? "cursor-pointer" : "cursor-default"}` }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "checkbox",
+      checked: !!avisar && !!hayHora,
+      disabled: !hayHora,
+      onChange: (e) => toggle(e.target.checked),
+      className: "w-4 h-4 accent-amber-500 shrink-0"
+    }
+  ), /* @__PURE__ */ React.createElement(Bell, { size: 13, className: avisar && hayHora ? "text-amber-500" : "text-neutral-400" }), /* @__PURE__ */ React.createElement("span", { className: hayHora ? "font-medium" : "text-neutral-400" }, "Avisarme antes de que empiece")), !hayHora && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400 mt-1 pl-6" }, "Pon\xE9 una hora y se puede pedir el aviso."), hayHora && avisar && /* @__PURE__ */ React.createElement("div", { className: "mt-1.5 pl-6 flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "number",
+      min: "0",
+      max: "120",
+      value: ant == null ? "" : ant,
+      placeholder: String(general),
+      onChange: (e) => setAnt(e.target.value === "" ? null : Math.max(0, Math.min(120, Number(e.target.value) || 0))),
+      className: "w-16 px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
+    }
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "minutos antes ", ant == null ? `(vac\xEDo = los ${general} de Recordatorios)` : "")), hayHora && avisar && permiso !== "granted" && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-red-500 mt-1 pl-6" }, "Falta darle permiso de notificaciones a este aparato \u2014 el aviso queda guardado igual y suena cuando lo des."), hayHora && avisar && !nota && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400 mt-1 pl-6" }, "Suena mientras el dashboard o la app est\xE9n abiertos. Para que avise con todo cerrado, mand\xE1 las marcadas al Calendario desde Recordatorios."), nota && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400 mt-1 pl-6" }, nota));
+}
+function EventoForm({ inicial, fechaSugerida, taxonomia, onGuardar, onEliminar, onCancelar }) {
+  var _a;
+  const areaList = areasDeTaxonomia(taxonomia);
+  const [categoria, setCategoria] = useState((inicial == null ? void 0 : inicial.categoria) || areaList[0] && areaList[0].key || "Personal");
+  const [seccion, setSeccion] = useState((inicial == null ? void 0 : inicial.seccion) || "");
+  const [subseccion, setSubseccion] = useState((inicial == null ? void 0 : inicial.subseccion) || "");
+  const [titulo, setTitulo] = useState((inicial == null ? void 0 : inicial.titulo) || "");
+  const [descripcion, setDescripcion] = useState((inicial == null ? void 0 : inicial.descripcion) || "");
+  const [fecha, setFecha] = useState((inicial == null ? void 0 : inicial.fecha) || fechaSugerida || fechaISOde(/* @__PURE__ */ new Date()));
+  const [hora, setHora] = useState((inicial == null ? void 0 : inicial.hora) || "");
+  const [duracion, setDuracion] = useState((inicial == null ? void 0 : inicial.duracion) || 60);
+  const av0 = avisoDe(inicial ? `evt::${inicial.id}` : null);
+  const [avisar, setAvisar] = useState(av0.avisar);
+  const [ant, setAnt] = useState(av0.ant);
+  const taxArea = (taxonomia || []).find((t) => t.area === categoria);
+  const secciones = Array.from(/* @__PURE__ */ new Set([...((taxArea == null ? void 0 : taxArea.secciones) || []).map((x) => x.nombre).filter(Boolean), ...seccion ? [seccion] : []]));
+  const subsecciones = Array.from(/* @__PURE__ */ new Set([...(((_a = ((taxArea == null ? void 0 : taxArea.secciones) || []).find((x) => x.nombre === seccion)) == null ? void 0 : _a.subsecciones) || []).filter(Boolean), ...subseccion ? [subseccion] : []]));
+  const inputCls = "px-2.5 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm";
+  const DURACIONES = [15, 30, 45, 60, 90, 120, 180, 240, 300, 480];
+  const durLabel = (d) => d >= 60 ? `${Math.floor(d / 60)}h${d % 60 ? ` ${d % 60}'` : ""}` : `${d}'`;
+  function guardar() {
+    if (!titulo.trim()) {
+      alert("Pon\xE9 un nombre al evento (ej: Turno m\xE9dico, Rendida de Biolog\xEDa)");
+      return;
+    }
+    if (!fecha) {
+      alert("Eleg\xED la fecha del evento");
+      return;
+    }
+    onGuardar({
+      categoria,
+      seccion: seccion.trim(),
+      subseccion: subseccion.trim(),
+      titulo: titulo.trim(),
+      tarea: titulo.trim(),
+      descripcion: descripcion.trim(),
+      fecha,
+      hora: hora || null,
+      duracion: hora ? Math.max(5, Number(duracion) || 60) : null,
+      _aviso: { avisar: !!avisar && !!hora, ant }
+    });
+  }
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/20 p-4 space-y-3", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-sky-700 dark:text-sky-300 font-medium" }, inicial ? "Editar evento" : "Nuevo evento \u2014 una fecha, una vez"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "1. \xC1rea"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: a.key,
+      onClick: () => {
+        setCategoria(a.key);
+        setSeccion("");
+        setSubseccion("");
+      },
+      className: "text-xs px-2 py-1 rounded-md border transition",
+      style: { color: categoria === a.key ? "#fff" : a.color, background: categoria === a.key ? a.color : "transparent", borderColor: categoria === a.key ? a.color : `${a.color}40` }
+    },
+    a.key
+  )))), /* @__PURE__ */ React.createElement("div", { className: "jarvis-form-2 grid grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "2. Secci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: seccion, onChange: (e) => {
+    setSeccion(e.target.value);
+    setSubseccion("");
+  }, className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 sin secci\xF3n \u2014"), secciones.map((x) => /* @__PURE__ */ React.createElement("option", { key: x, value: x }, x)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "3. Subsecci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: subseccion, onChange: (e) => setSubseccion(e.target.value), disabled: !seccion, className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, seccion ? "\u2014 sin subsecci\xF3n \u2014" : "eleg\xED secci\xF3n primero"), subsecciones.map((x) => /* @__PURE__ */ React.createElement("option", { key: x, value: x }, x))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "4. Qu\xE9 es"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "text",
+      value: titulo,
+      onChange: (e) => setTitulo(e.target.value),
+      placeholder: "Ej: Rendida de Biolog\xEDa \xB7 Turno m\xE9dico \xB7 Reuni\xF3n con Paz",
+      className: `${inputCls} w-full`
+    }
+  )), /* @__PURE__ */ React.createElement("div", { className: "jarvis-form-3 grid grid-cols-3 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "5. Fecha"), /* @__PURE__ */ React.createElement("input", { type: "date", value: fecha, onChange: (e) => setFecha(e.target.value), className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "6. Hora ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional)")), /* @__PURE__ */ React.createElement("input", { type: "time", step: "300", value: hora, onChange: (e) => setHora(e.target.value), className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "7. Duraci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: duracion, onChange: (e) => setDuracion(Number(e.target.value)), disabled: !hora, className: `${inputCls} w-full` }, DURACIONES.map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, durLabel(d)))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "Detalle ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional \u2014 qu\xE9 llevar, con qui\xE9n, d\xF3nde)")), /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      value: descripcion,
+      onChange: (e) => setDescripcion(e.target.value),
+      rows: 2,
+      placeholder: "Ej: Consultorio 4, llevar los estudios de marzo",
+      className: `${inputCls} w-full resize-y`
+    }
+  )), /* @__PURE__ */ React.createElement(CampoAviso, { avisar, setAvisar, ant, setAnt, hayHora: !!hora }), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400" }, "El evento aparece en el calendario del mes, en ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), " y en ", /* @__PURE__ */ React.createElement("b", null, "Semana"), " el d\xEDa de su fecha, y manda sobre la rutina en esa franja. Pasada la fecha deja de ocupar lugar."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: guardar, className: "px-3 py-1.5 rounded-md bg-sky-600 text-white text-sm font-medium" }, inicial ? "Guardar" : "Agregar evento"), onEliminar && /* @__PURE__ */ React.createElement("button", { onClick: onEliminar, className: "px-3 py-1.5 rounded-md border border-red-200 dark:border-red-900 text-red-500 text-sm hover:bg-red-50 dark:hover:bg-red-950/30" }, "Eliminar"), /* @__PURE__ */ React.createElement("button", { onClick: onCancelar, className: "px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm" }, "Cancelar")));
 }
 function Campanita({ clave, datos, size = 13, className = "" }) {
   const [, setTick] = useState(0);
@@ -2451,6 +2648,8 @@ function BloqueTimeline({ bloque, esActual, yaPaso, color, isChecked, onToggleSu
       {
         inicial: bloque,
         esCustom: esDeSemana,
+        notifClave: dayKey ? `${dayKey}::${bloque.id}` : null,
+        notifDia: dayKey,
         alcanceSemanal: !esDeSemana,
         onGuardar: (c) => {
           onEditar(c);
@@ -2492,8 +2691,15 @@ function BloqueTimeline({ bloque, esActual, yaPaso, color, isChecked, onToggleSu
       /* @__PURE__ */ React.createElement(
         Campanita,
         {
-          clave: `${dayKey}::${bloque.id}`,
-          datos: { titulo: bloque.titulo, hora: bloque.hora, dia: dayKey, area: bloque.area },
+          clave: bloque.tipo === "evento" ? `evt::${bloque.eventoId}` : `${dayKey}::${bloque.id}`,
+          datos: {
+            titulo: bloque.titulo,
+            hora: bloque.hora,
+            dia: dayKey,
+            area: bloque.area,
+            duracion: bloque.duracion,
+            ...bloque.tipo === "evento" ? { fecha: bloque.fecha } : {}
+          },
           className: "self-center"
         }
       ),
@@ -2706,7 +2912,9 @@ function VistaSemanal({ objetivos: objetivosProp, now, weekDates, setSelectedDay
   }, [slots]);
   const diasData = useMemo(() => {
     return diasOrdenados.map((d) => {
-      const agenda = buildDayAgenda(d.key, objetivos, semKey).filter((b) => (b.duracion || 0) > 0).filter((b) => areaVisible(b.area));
+      const iDia = DIAS.findIndex((x) => x.key === d.key);
+      const fechaDia = weekDates && weekDates[iDia] ? fechaISOde(weekDates[iDia]) : null;
+      const agenda = buildDayAgenda(d.key, objetivos, semKey, fechaDia).filter((b) => (b.duracion || 0) > 0).filter((b) => areaVisible(b.area));
       const porInicio = {};
       const ocupados = /* @__PURE__ */ new Set();
       const dueno = {};
@@ -2738,7 +2946,7 @@ function VistaSemanal({ objetivos: objetivosProp, now, weekDates, setSelectedDay
       });
       return { dia: d, agenda, porInicio, ocupados };
     });
-  }, [objetivos, slots, rutinaTick, slotIdxDe, semKey, areaVisible]);
+  }, [objetivos, slots, rutinaTick, slotIdxDe, semKey, areaVisible, weekDates]);
   return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Semana \u2014 vista por sub\xE1rea"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500" }, editMode ? "Click en un bloque \u2192 concretar qu\xE9 hac\xE9s esa franja ESTA semana \xB7 click en una celda vac\xEDa \u2192 crear actividad de ese d\xEDa. Rutina no se toca." : `\u2605 = objetivo o actividad propia: pisa la rutina sin borrarla de su pesta\xF1a. ${punteroFino ? "Arrastr\xE1" : "Toc\xE1"} los objetivos sin fecha del checklist de abajo para agendarlos. Click \u2192 detalle del d\xEDa.`), onReiniciarSemana && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -2784,6 +2992,8 @@ NO se toca: la Rutina ni los Objetivos semanales.
     BloqueEditForm,
     {
       inicial: editando.bloque,
+      notifClave: `${editando.dayKey}::${editando.bloque.id}`,
+      notifDia: editando.dayKey,
       esCustom: bloqueEsDeSemana(editando.dayKey, editando.bloque.id),
       alcanceSemanal: !bloqueEsDeSemana(editando.dayKey, editando.bloque.id),
       seccion: editando.bloque.subarea,
@@ -3277,7 +3487,8 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
     if (agregarObjetivoSemanal) {
       agregarObjetivoSemanal(nuevo);
     } else {
-      setObjetivos([...objetivos, { ...nuevo, id: Date.now() }]);
+      const { _aviso, ...limpio } = nuevo || {};
+      setObjetivos([...objetivos, { ...limpio, id: Date.now() }]);
     }
     setMostrarForm(false);
   }
@@ -3798,6 +4009,9 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
   const [prioridad, setPrioridad] = useState((inicial == null ? void 0 : inicial.prioridad) || "semanal");
   const [recurrencia, setRecurrencia] = useState((inicial == null ? void 0 : inicial.recurrencia) || "una_vez");
   const [fechaMes, setFechaMes] = useState((inicial == null ? void 0 : inicial.fecha_mes) || "");
+  const avIni = avisoDe(inicial && inicial.id ? `obj::${inicial.id}` : null);
+  const [avisar, setAvisar] = useState(avIni.avisar);
+  const [antAviso, setAntAviso] = useState(avIni.ant);
   const ofTaxArea = (taxonomia || []).find((t) => t.area === categoria);
   const seccionesExistentes = Array.from(/* @__PURE__ */ new Set([...((ofTaxArea == null ? void 0 : ofTaxArea.secciones) || []).map((x) => x.nombre).filter(Boolean), ...seccion ? [seccion] : []]));
   const subseccionesExistentes = Array.from(/* @__PURE__ */ new Set([...(((_a = ((ofTaxArea == null ? void 0 : ofTaxArea.secciones) || []).find((x) => x.nombre === seccion)) == null ? void 0 : _a.subsecciones) || []).filter(Boolean), ...subseccion ? [subseccion] : []]));
@@ -3819,6 +4033,10 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       if (x && x.titulo) hechaPorTitulo[x.titulo] = !!x.hecha;
     });
     const subtareas = subText.split("\n").map((t) => t.trim()).filter(Boolean).map((t, i) => ({ id: `os-${i}-${t.slice(0, 24)}`, titulo: t, hecha: !!hechaPorTitulo[t] }));
+    const aviso = { avisar: !!avisar && !!hora && !!dia, ant: antAviso };
+    if (inicial && inicial.id) {
+      aplicarAviso(`obj::${inicial.id}`, { titulo: tarea || subseccion || seccion, hora, dia, area: categoria, duracion }, aviso);
+    }
     onGuardar({
       categoria,
       seccion: seccion || "",
@@ -3834,7 +4052,8 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       fecha_mes: recurrencia === "mensual" ? fechaMes : null,
       lp_id: lpId || null,
       lp_hito_id: lpHitoId || null,
-      completado: (inicial == null ? void 0 : inicial.completado) || false
+      completado: (inicial == null ? void 0 : inicial.completado) || false,
+      ...inicial && inicial.id ? {} : { _aviso: aviso }
     });
   }
   return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, inicial ? "Editar objetivo" : "Nuevo objetivo"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "1. Categor\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(\xE1reas definidas en Largo plazo)")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
@@ -3910,7 +4129,17 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     },
     [15, 30, 45, 60, 90, 120, 150, 180, 240].map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}'` : ""}` : `${m}'`))
-  ))), hora && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 -mt-1.5" }, "Con d\xEDa + hora, este objetivo ", /* @__PURE__ */ React.createElement("strong", null, "manda sobre la rutina"), ": en \u201CSemana\u201D ocupa su franja y la rutina le cede el lugar."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "Prioridad"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, Object.entries(PRIORIDADES).map(([k, p]) => /* @__PURE__ */ React.createElement(
+  ))), hora && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 -mt-1.5" }, "Con d\xEDa + hora, este objetivo ", /* @__PURE__ */ React.createElement("strong", null, "manda sobre la rutina"), ": en \u201CSemana\u201D ocupa su franja y la rutina le cede el lugar."), /* @__PURE__ */ React.createElement(
+    CampoAviso,
+    {
+      avisar,
+      setAvisar,
+      ant: antAviso,
+      setAnt: setAntAviso,
+      hayHora: !!hora && !!dia,
+      nota: !hora || !dia ? "Necesita d\xEDa y hora para poder avisar." : null
+    }
+  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "Prioridad"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, Object.entries(PRIORIDADES).map(([k, p]) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: k,
@@ -3991,24 +4220,33 @@ function armarICSDeMarcas(marcas, anticipacion) {
   let cuantos = 0;
   Object.keys(marcas || {}).forEach((clave) => {
     const m = marcas[clave];
-    if (!m || !m.hora || !m.dia || !BYDAY[m.dia]) return;
-    const idx = DIAS2.indexOf(m.dia);
-    const base = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
-    base.setDate(base.getDate() + (idx - base.getDay() + 7) % 7);
+    if (!m || !m.hora) return;
+    const puntual = !!m.fecha;
+    if (!puntual && (!m.dia || !BYDAY[m.dia])) return;
+    let base;
+    if (puntual) {
+      const [ay, am, ad] = String(m.fecha).split("-").map(Number);
+      base = new Date(ay, (am || 1) - 1, ad || 1);
+    } else {
+      const idx = DIAS2.indexOf(m.dia);
+      base = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
+      base.setDate(base.getDate() + (idx - base.getDay() + 7) % 7);
+    }
     const [hh, mm] = String(m.hora).split(":").map(Number);
     const ini = new Date(base.getFullYear(), base.getMonth(), base.getDate(), hh || 0, mm || 0, 0);
     const fin = new Date(ini.getTime() + (m.duracion || 30) * 6e4);
+    const antEsta = m.ant === 0 || m.ant ? +m.ant : anticipacion || 0;
     cuantos++;
     L.push("BEGIN:VEVENT");
     L.push("UID:jarvis-" + String(clave).replace(/[^a-zA-Z0-9-]/g, "") + "@jarvis.martin");
     L.push("DTSTAMP:" + icsFecha(/* @__PURE__ */ new Date(), false));
     L.push("DTSTART:" + icsFecha(ini, true));
     L.push("DTEND:" + icsFecha(fin, true));
-    L.push("RRULE:FREQ=WEEKLY;BYDAY=" + BYDAY[m.dia]);
+    if (!puntual) L.push("RRULE:FREQ=WEEKLY;BYDAY=" + BYDAY[m.dia]);
     L.push("SUMMARY:" + icsEscapar(m.titulo));
     if (m.area) L.push("DESCRIPTION:" + icsEscapar(m.area));
     L.push("BEGIN:VALARM");
-    L.push("TRIGGER:-PT" + Math.max(0, anticipacion || 0) + "M");
+    L.push("TRIGGER:-PT" + Math.max(0, antEsta) + "M");
     L.push("ACTION:DISPLAY");
     L.push("DESCRIPTION:" + icsEscapar(m.titulo));
     L.push("END:VALARM");
@@ -4077,11 +4315,15 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
   const notifMarcas = window.JarvisNotif ? window.JarvisNotif.lista() : {};
   const ORDEN_DIA = { Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6, Sunday: 7 };
   const notifClavesOrden = Object.keys(notifMarcas).sort((a, b) => {
-    const da = ORDEN_DIA[notifMarcas[a].dia] || 9, db = ORDEN_DIA[notifMarcas[b].dia] || 9;
-    return da !== db ? da - db : String(notifMarcas[a].hora || "").localeCompare(String(notifMarcas[b].hora || ""));
+    const ma = notifMarcas[a], mb = notifMarcas[b];
+    const fa = ma.fecha ? 0 : 1, fb = mb.fecha ? 0 : 1;
+    if (fa !== fb) return fa - fb;
+    if (ma.fecha && mb.fecha && ma.fecha !== mb.fecha) return ma.fecha < mb.fecha ? -1 : 1;
+    const da = ORDEN_DIA[ma.dia] || 9, db = ORDEN_DIA[mb.dia] || 9;
+    return da !== db ? da - db : String(ma.hora || "").localeCompare(String(mb.hora || ""));
   });
   const DIA_ES = { Sunday: "Dom", Monday: "Lun", Tuesday: "Mar", Wednesday: "Mi\xE9", Thursday: "Jue", Friday: "Vie", Saturday: "S\xE1b" };
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Usted elige actividad por actividad: la campanita \u{1F514} est\xE1 en ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), ", en ", /* @__PURE__ */ React.createElement("b", null, "Rutina"), " y en cada ", /* @__PURE__ */ React.createElement("b", null, "objetivo semanal"), " que tenga d\xEDa y hora. La marcada avisa ", /* @__PURE__ */ React.createElement("b", null, "todas las semanas"), " ese d\xEDa a esa hora, hasta que la apague. Funciona mientras el dashboard o la app est\xE9n abiertos; para que avise con todo cerrado, mand\xE1 las marcadas al Calendario con el bot\xF3n de m\xE1s abajo. Las marcas se sincronizan entre tus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Usted elige actividad por actividad. Hay dos formas de prenderlo: el casillero", /* @__PURE__ */ React.createElement("b", null, " \u201CAvisarme antes de que empiece\u201D"), " dentro del formulario que crea la actividad (objetivo, actividad de rutina, actividad del d\xEDa o evento), o la campanita \u{1F514} al lado de cualquier actividad ya creada, en ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), ", ", /* @__PURE__ */ React.createElement("b", null, "Rutina"), " y ", /* @__PURE__ */ React.createElement("b", null, "Obj. semanales"), ". Lo de la rutina avisa ", /* @__PURE__ */ React.createElement("b", null, "todas las semanas"), " ese d\xEDa a esa hora; un ", /* @__PURE__ */ React.createElement("b", null, "evento"), " avisa", /* @__PURE__ */ React.createElement("b", null, " una sola vez"), ", el d\xEDa de su fecha. Cada uno puede tener su propia anticipaci\xF3n; si no se la pone, usa la general de ac\xE1 abajo. Funciona mientras el dashboard o la app est\xE9n abiertos; para que avise con todo cerrado, mand\xE1 las marcadas al Calendario con el bot\xF3n de m\xE1s abajo. Las marcas se sincronizan entre tus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => window.JarvisNotif.pedirPermiso().then(() => setNotifTick((t) => t + 1)),
@@ -4108,10 +4350,13 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
       className: "px-3 py-1.5 rounded-md text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40"
     },
     "Probar un aviso"
-  )), notifClavesOrden.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-400" }, "Todav\xEDa no marcaste ninguna actividad. La campanita \u{1F514} est\xE1 en cada actividad de ", /* @__PURE__ */ React.createElement("b", null, "Mi d\xEDa"), "y de ", /* @__PURE__ */ React.createElement("b", null, "Rutina"), ", y en cada ", /* @__PURE__ */ React.createElement("b", null, "objetivo semanal"), " que tenga d\xEDa y hora.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500" }, "Avisando ", notifClavesOrden.length, " ", notifClavesOrden.length === 1 ? "actividad" : "actividades", " \u2014 la \u2715 apaga una:"), notifClavesOrden.map((k) => {
+  )), notifClavesOrden.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-400" }, "Todav\xEDa no marcaste ninguna actividad. Prend\xE9 el aviso al crearla \u2014el casillero \u201CAvisarme antes de que empiece\u201D est\xE1 en el mismo formulario\u2014 o con la campanita \u{1F514} en", /* @__PURE__ */ React.createElement("b", null, " Mi d\xEDa"), ", ", /* @__PURE__ */ React.createElement("b", null, "Rutina"), " y ", /* @__PURE__ */ React.createElement("b", null, "Obj. semanales"), ".") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500" }, "Avisando ", notifClavesOrden.length, " ", notifClavesOrden.length === 1 ? "actividad" : "actividades", " \u2014 la \u2715 apaga una:"), notifClavesOrden.map((k) => {
     const m = notifMarcas[k];
-    const esHoy = m.dia === currentDayKey(/* @__PURE__ */ new Date());
-    return /* @__PURE__ */ React.createElement("div", { key: k, className: `flex items-center gap-2 text-xs bg-white dark:bg-neutral-950 border rounded-lg px-2.5 py-1.5 ${esHoy ? "border-amber-300 dark:border-amber-800" : "border-neutral-200 dark:border-neutral-800"}` }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-amber-600 shrink-0" }, DIA_ES[m.dia] || m.dia, " ", m.hora), /* @__PURE__ */ React.createElement("span", { className: "truncate flex-1" }, m.titulo), esHoy && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-amber-600 shrink-0" }, "hoy"), /* @__PURE__ */ React.createElement(
+    const hoyISO2 = fechaISOde(/* @__PURE__ */ new Date());
+    const esHoy = m.fecha ? m.fecha === hoyISO2 : m.dia === currentDayKey(/* @__PURE__ */ new Date());
+    const cuando = m.fecha ? fechaDeISO(m.fecha).toLocaleDateString("es-AR", { day: "numeric", month: "short" }) : DIA_ES[m.dia] || m.dia;
+    const pasado = !!m.fecha && m.fecha < hoyISO2;
+    return /* @__PURE__ */ React.createElement("div", { key: k, className: `flex items-center gap-2 text-xs bg-white dark:bg-neutral-950 border rounded-lg px-2.5 py-1.5 ${esHoy ? "border-amber-300 dark:border-amber-800" : "border-neutral-200 dark:border-neutral-800"} ${pasado ? "opacity-50" : ""}` }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-amber-600 shrink-0" }, cuando, " ", m.hora), /* @__PURE__ */ React.createElement("span", { className: "truncate flex-1" }, m.titulo), m.fecha && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-sky-500 shrink-0" }, "una vez"), (m.ant === 0 || m.ant) && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-neutral-400 shrink-0" }, m.ant, "\u2032 antes"), esHoy && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-amber-600 shrink-0" }, "hoy"), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => {
@@ -4123,7 +4368,7 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
       },
       /* @__PURE__ */ React.createElement(X, { size: 13 })
     ));
-  })), /* @__PURE__ */ React.createElement("div", { className: "pt-3 mt-1 border-t border-amber-200/60 dark:border-amber-900/40" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 leading-snug mb-2" }, /* @__PURE__ */ React.createElement("b", null, "\xBFAvisos con la app cerrada?"), " El navegador no puede; el Calendario del celular s\xED. Baj\xE1 ", /* @__PURE__ */ React.createElement("b", null, "s\xF3lo las que marcaste"), " como eventos con alarma y subilas una vez en Google Calendar (", /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap" }, "Configuraci\xF3n \u203A Importar y exportar"), "). Quedan como eventos ", /* @__PURE__ */ React.createElement("b", null, "semanales"), ": se importa una vez y avisa todas las semanas."), /* @__PURE__ */ React.createElement(
+  })), /* @__PURE__ */ React.createElement("div", { className: "pt-3 mt-1 border-t border-amber-200/60 dark:border-amber-900/40" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 leading-snug mb-2" }, /* @__PURE__ */ React.createElement("b", null, "\xBFAvisos con la app cerrada?"), " El navegador no puede; el Calendario del celular s\xED. Baj\xE1 ", /* @__PURE__ */ React.createElement("b", null, "s\xF3lo las que marcaste"), " como eventos con alarma y subilas una vez en Google Calendar (", /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap" }, "Configuraci\xF3n \u203A Importar y exportar"), "). Lo de la rutina va como evento ", /* @__PURE__ */ React.createElement("b", null, "semanal"), " (se importa una vez y avisa todas las semanas); cada ", /* @__PURE__ */ React.createElement("b", null, "evento con fecha"), " va como cita de una sola vez, ese d\xEDa."), /* @__PURE__ */ React.createElement(
     "button",
     {
       disabled: notifClavesOrden.length === 0,
@@ -4459,7 +4704,8 @@ function PanelRecurrentes({ now, recs, setRecs, objetivos, taxonomia }) {
     a.key
   )))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Secci\xF3n (sub\xE1rea)"), /* @__PURE__ */ React.createElement("input", { type: "text", value: nuevo.seccion, onChange: (e) => setNuevo({ ...nuevo, seccion: e.target.value }), list: "rec-secciones", placeholder: "Ej: Facturaci\xF3n, Salud...", className: `${inputCls} w-full` }), /* @__PURE__ */ React.createElement("datalist", { id: "rec-secciones" }, secciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s })))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Subsecci\xF3n (opcional)"), /* @__PURE__ */ React.createElement("input", { type: "text", value: nuevo.subseccion, onChange: (e) => setNuevo({ ...nuevo, subseccion: e.target.value }), className: `${inputCls} w-full` }))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Tarea"), /* @__PURE__ */ React.createElement("input", { type: "text", value: nuevo.tarea, onChange: (e) => setNuevo({ ...nuevo, tarea: e.target.value }), placeholder: "Ej: Backup del CRM, Revisar seguros...", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Frecuencia"), /* @__PURE__ */ React.createElement("select", { value: nuevo.frecuencia, onChange: (e) => setNuevo({ ...nuevo, frecuencia: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "semanal" }, "Semanal"), /* @__PURE__ */ React.createElement("option", { value: "mensual" }, "Mensual"))), nuevo.frecuencia === "mensual" ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "D\xEDa del mes"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_mes || 1, onChange: (e) => setNuevo({ ...nuevo, dia_mes: Number(e.target.value) }), className: inputCls }, Array.from({ length: 31 }, (_, i) => i + 1).map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, d)))) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "D\xEDa de la semana"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_semana || "", onChange: (e) => setNuevo({ ...nuevo, dia_semana: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin d\xEDa fijo"), DIAS.map((d) => /* @__PURE__ */ React.createElement("option", { key: d.key, value: d.key }, d.full)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Hora (opcional)"), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: nuevo.hora, onChange: (e) => setNuevo({ ...nuevo, hora: e.target.value }), className: inputCls })), /* @__PURE__ */ React.createElement("button", { onClick: guardar, className: "px-3 py-1.5 rounded-md bg-orange-600 text-white text-sm font-medium" }, editId ? "Guardar" : "Agregar")), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400" }, nuevo.frecuencia === "mensual" ? `Aparece en el calendario, y en Mi d\xEDa / Semana cuando el d\xEDa ${nuevo.dia_mes} caiga en la semana en curso.` : nuevo.dia_semana ? `Aparece todas las semanas en Mi d\xEDa y en Semana, el ${(_a = DIAS.find((d) => d.key === nuevo.dia_semana)) == null ? void 0 : _a.full.toLowerCase()}${nuevo.hora ? ` a las ${nuevo.hora}` : " (sin horario fijo)"}.` : "Sin d\xEDa fijo queda solo en esta lista. Eleg\xED un d\xEDa para que baje a Mi d\xEDa y a Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-5" }, /* @__PURE__ */ React.createElement(Grupo, { titulo: "Una vez al mes", items: mensuales, badge: pendMes }), /* @__PURE__ */ React.createElement(Grupo, { titulo: "Una vez por semana", items: semanales, badge: pendSem })));
 }
-function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, weekDates, setSelectedDay, setTab, rutinaTick, recurrentes, setRecurrentes, taxonomia }) {
+function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, weekDates, setSelectedDay, setTab, rutinaTick, recurrentes, setRecurrentes, taxonomia, eventos, agregarEvento, editarEvento, eliminarEvento }) {
+  const [formEvento, setFormEvento] = useState(null);
   const areaList = useMemo(() => areasDeTaxonomia(taxonomia), [taxonomia]);
   const [vistaOrg, setVistaOrg] = useState("mes");
   const [filtroCat, setFiltroCat] = useState(null);
@@ -4505,7 +4751,7 @@ function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, week
   const mesLabel = baseMes.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
   const semanasMes = useMemo(() => {
     const first = new Date(baseMes.getFullYear(), baseMes.getMonth(), 1);
-    const start = getInicioDeSemana(first);
+    const start = inicioSemanaLunes(first);
     const weeks = [];
     let cur = new Date(start);
     for (let w = 0; w < 6; w++) {
@@ -4534,6 +4780,10 @@ function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, week
         if (o.dia === wkd) out.push(o);
       }
     });
+    const iso = fechaISOde(date);
+    (eventos || []).forEach((ev) => {
+      if (ev && ev.fecha === iso) out.push({ ...ev, esEvento: true });
+    });
     (recurrentes || []).forEach((r) => {
       const cae = r.frecuencia === "mensual" && r.dia_mes && Number(r.dia_mes) === dom || r.frecuencia === "semanal" && r.dia_semana && r.dia_semana === wkd;
       if (cae) {
@@ -4553,7 +4803,38 @@ function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, week
     /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-1" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] font-medium flex items-center gap-1", style: { color: getAreaColor(o.categoria) } }, /* @__PURE__ */ React.createElement(AreaIcon, { area: o.categoria, size: 10 }), " ", o.seccion || o.categoria, o.prioridad === "urgente" && /* @__PURE__ */ React.createElement(Flame, { size: 10, className: "text-red-500" })), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-800 dark:text-neutral-200 leading-snug mt-0.5" }, o.tarea || o.subseccion || o.seccion), enDia && o.hora && /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400 font-mono mt-0.5" }, o.hora)), enDia && /* @__PURE__ */ React.createElement("button", { onClick: () => asignarObjetivo(o.id, null, null), title: "Volver al pool", className: "jarvis-acciones p-0.5 text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 shrink-0" }, /* @__PURE__ */ React.createElement(X, { size: 12 }))),
     !enDia && /* @__PURE__ */ React.createElement("div", { className: "flex gap-0.5 mt-1.5" }, DIAS.map((d) => /* @__PURE__ */ React.createElement("button", { key: d.key, onClick: () => asignarObjetivo(o.id, d.key, null), title: `Asignar al ${d.full}`, className: "flex-1 text-[9px] py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 text-neutral-500 hover:bg-neutral-900 hover:text-white dark:hover:bg-neutral-100 dark:hover:text-neutral-900 transition-colors" }, d.es[0])))
   );
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Organizar"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Vista mensual del calendario o tablero de la semana. Recurrentes mensuales con d\xEDa y hora, que fluyen a Mi d\xEDa y Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden" }, [{ k: "mes", label: "Mes" }, { k: "semana", label: "Semana" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.k, onClick: () => setVistaOrg(v.k), className: `text-xs px-3 py-1.5 font-medium ${vistaOrg === v.k ? "bg-amber-500 text-neutral-950" : "text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-900"}` }, v.label))), /* @__PURE__ */ React.createElement("button", { onClick: exportarPlan, className: "text-xs px-2.5 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900 flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(Download, { size: 12 }), " Exportar"))), /* @__PURE__ */ React.createElement(PanelRecurrentes, { now, recs: recurrentes, setRecs: setRecurrentes, objetivos: objetivosVista || objetivos, taxonomia }), vistaOrg === "mes" ? /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Organizar"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Vista mensual del calendario o tablero de la semana. Ac\xE1 se cargan los ", /* @__PURE__ */ React.createElement("b", null, "eventos"), " \u2014lo que pasa una vez, en una fecha: una rendida, un turno m\xE9dico\u2014 y las recurrentes. Todo fluye a Mi d\xEDa y a Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden" }, [{ k: "mes", label: "Mes" }, { k: "semana", label: "Semana" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.k, onClick: () => setVistaOrg(v.k), className: `text-xs px-3 py-1.5 font-medium ${vistaOrg === v.k ? "bg-amber-500 text-neutral-950" : "text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-900"}` }, v.label))), agregarEvento && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        setVistaOrg("mes");
+        setFormEvento({ modo: "nuevo", fecha: detKey ? fechaISOde(new Date(detKey)) : fechaISOde(now) });
+      },
+      title: "Cargar algo que pasa una sola vez, en una fecha: una rendida, un turno m\xE9dico, una reuni\xF3n",
+      className: "text-xs px-2.5 py-1.5 rounded-md border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/30 flex items-center gap-1.5"
+    },
+    /* @__PURE__ */ React.createElement(CalendarPlus, { size: 12 }),
+    " Nuevo evento"
+  ), /* @__PURE__ */ React.createElement("button", { onClick: exportarPlan, className: "text-xs px-2.5 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900 flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(Download, { size: 12 }), " Exportar"))), /* @__PURE__ */ React.createElement(PanelRecurrentes, { now, recs: recurrentes, setRecs: setRecurrentes, objetivos: objetivosVista || objetivos, taxonomia }), formEvento && /* @__PURE__ */ React.createElement(
+    EventoForm,
+    {
+      inicial: formEvento.modo === "editar" ? formEvento.ev : null,
+      fechaSugerida: formEvento.fecha,
+      taxonomia,
+      onGuardar: (datos) => {
+        if (formEvento.modo === "editar") editarEvento(formEvento.ev.id, datos);
+        else agregarEvento(datos);
+        setFormEvento(null);
+      },
+      onEliminar: formEvento.modo === "editar" ? () => {
+        if (confirm("\xBFEliminar este evento?")) {
+          eliminarEvento(formEvento.ev.id);
+          setFormEvento(null);
+        }
+      } : null,
+      onCancelar: () => setFormEvento(null)
+    }
+  ), vistaOrg === "mes" ? /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setMesOffset(mesOffset - 1);
     setDetKey(null);
   }, className: "p-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16, className: "rotate-180" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg font-medium capitalize" }, mesLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => {
@@ -4596,7 +4877,23 @@ ${itemTitulo(it)}${it.hora ? ` \xB7 ${it.hora}` : ""}`
     return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "font-medium text-sm capitalize" }, date.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })), inCurrentWeek && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setSelectedDay(wkd);
       setTab("dia");
-    }, className: "text-xs px-2.5 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900" }, "Ver en Mi d\xEDa \u2192")), items.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400 italic" }, "Sin tareas ese d\xEDa.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, items.map((o) => /* @__PURE__ */ React.createElement("div", { key: o.id, className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "w-1.5 h-1.5 rounded-full shrink-0", style: { background: getAreaColor(o.categoria) } }), /* @__PURE__ */ React.createElement("span", { className: "text-[11px]", style: { color: getAreaColor(o.categoria) } }, o.seccion || o.categoria), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-300" }, "\u203A"), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, itemTitulo(o)), o.hora && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-neutral-400 font-mono ml-auto" }, o.hora), o.esRecurrente && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-orange-500 ml-1" }, "recurrente")))));
+    }, className: "text-xs px-2.5 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900" }, "Ver en Mi d\xEDa \u2192")), items.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400 italic" }, "Sin tareas ese d\xEDa.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, items.map((o) => /* @__PURE__ */ React.createElement("div", { key: o.id, className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "w-1.5 h-1.5 rounded-full shrink-0", style: { background: getAreaColor(o.categoria) } }), /* @__PURE__ */ React.createElement("span", { className: "text-[11px]", style: { color: getAreaColor(o.categoria) } }, o.seccion || o.categoria), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-300" }, "\u203A"), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, itemTitulo(o)), o.hora && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-neutral-400 font-mono ml-auto" }, o.hora), o.esRecurrente && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-orange-500 ml-1" }, "recurrente"), o.esEvento && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-sky-500 ml-1" }, "evento"), editarEvento && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setFormEvento({ modo: "editar", ev: (eventos || []).find((e) => e.id === o.id) || o }),
+        title: "Editar este evento",
+        className: "text-neutral-300 hover:text-sky-600 shrink-0"
+      },
+      /* @__PURE__ */ React.createElement(Pencil, { size: 12 })
+    ))))), agregarEvento && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setFormEvento({ modo: "nuevo", fecha: fechaISOde(date) }),
+        className: "mt-2.5 w-full py-2 rounded-lg border-2 border-dashed border-sky-200 dark:border-sky-900 text-xs text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/30 flex items-center justify-center gap-1.5"
+      },
+      /* @__PURE__ */ React.createElement(Plus, { size: 13 }),
+      " Cargar un evento ese d\xEDa"
+    ));
   })()) : /* @__PURE__ */ React.createElement("div", { className: "grid gap-4", style: { gridTemplateColumns: "minmax(230px, 300px) 1fr" } }, /* @__PURE__ */ React.createElement("div", { onDragOver: (e) => e.preventDefault(), onDrop: onDropPool, className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/30 p-3 self-start" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mb-2" }, /* @__PURE__ */ React.createElement(ClipboardList, { size: 14, className: "text-neutral-500" }), /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-medium" }, "Sin asignar"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-400" }, "(", pool.length, ")")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 mb-2.5" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFiltroCat(null), className: `text-[10px] px-1.5 py-0.5 rounded-full border ${!filtroCat ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 border-transparent" : "border-neutral-200 dark:border-neutral-700 text-neutral-500"}` }, "Todas"), areaList.filter((a) => pendientes.some((o) => !o.dia && o.categoria === a.key)).map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -4617,7 +4914,7 @@ ${itemTitulo(it)}${it.hora ? ` \xB7 ${it.hora}` : ""}`
     }, className: "text-left mb-1.5 hover:opacity-70" }, /* @__PURE__ */ React.createElement("div", { className: `text-xs font-semibold ${esHoy ? "text-amber-700 dark:text-amber-300" : ""}` }, dia.es, " ", fecha.getDate(), esHoy && /* @__PURE__ */ React.createElement("span", { className: "ml-1 text-[9px] font-normal" }, "hoy")), /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400" }, bloques, " bloques \xB7 ", horas, mins ? `:${String(mins).padStart(2, "0")}` : "", "hs"), /* @__PURE__ */ React.createElement("div", { className: "h-1 mt-1 rounded-full bg-neutral-100 dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full", style: { width: `${cargaPct}%`, background: cargaPct > 85 ? "#E24B4A" : cargaPct > 60 ? "#EF9F27" : "#5DCAA5" } }))), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 flex-1 min-h-[60px]" }, asignados.map((o) => /* @__PURE__ */ React.createElement(TarjetaObjetivo, { key: o.id, o, enDia: true })), asignados.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-300 dark:text-neutral-700 italic text-center pt-4" }, "soltar ac\xE1")));
   }))));
 }
-function TareaRutinaForm({ inicial, onGuardar, onCancelar, onEliminar, objetivos, conDias, tituloForm, areas, taxonomia }) {
+function TareaRutinaForm({ inicial, onGuardar, onCancelar, onEliminar, objetivos, conDias, tituloForm, areas, taxonomia, avisoInicial }) {
   var _a;
   const areaList = areas && areas.length ? areas : AREAS;
   const [categoria, setCategoria] = useState((inicial == null ? void 0 : inicial.categoria) || (inicial == null ? void 0 : inicial.area) || areaList[0] && areaList[0].key || "Personal");
@@ -4637,6 +4934,8 @@ function TareaRutinaForm({ inicial, onGuardar, onCancelar, onEliminar, objetivos
   });
   const [subText, setSubText] = useState(((inicial == null ? void 0 : inicial.subtareas) || []).map((s) => typeof s === "string" ? s : s.titulo).join("\n"));
   const [propAviso, setPropAviso] = useState(null);
+  const [avisar, setAvisar] = useState(!!(avisoInicial && avisoInicial.avisar));
+  const [antAviso, setAntAviso] = useState(avisoInicial ? avisoInicial.ant : null);
   const DURACIONES = [15, 30, 45, 60, 75, 90, 105, 120, 150, 180, 210, 240, 300];
   const durLabel = (d) => d >= 60 ? `${Math.floor(d / 60)}h${d % 60 ? ` ${d % 60}'` : ""}` : `${d}'`;
   const inputCls = "px-2.5 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm";
@@ -4686,14 +4985,15 @@ function TareaRutinaForm({ inicial, onGuardar, onCancelar, onEliminar, objetivos
       return;
     }
     const subtareas = subText.split("\n").map((s) => s.trim()).filter(Boolean).map((t, i) => ({ id: "st-" + i, titulo: t }));
+    const _aviso = { avisar: !!avisar && !!hora, ant: antAviso };
     if (conDias) {
       const hh = {};
       dias.forEach((d) => {
         hh[d] = horarios[d] || { hora, duracion };
       });
-      onGuardar({ categoria, seccion: seccion.trim(), subseccion: subseccion.trim(), tarea: tarea.trim(), hora, duracion, subtareas, dias, horarios: hh });
+      onGuardar({ categoria, seccion: seccion.trim(), subseccion: subseccion.trim(), tarea: tarea.trim(), hora, duracion, subtareas, dias, horarios: hh, _aviso });
     } else {
-      onGuardar({ categoria, seccion: seccion.trim(), subseccion: subseccion.trim(), tarea: tarea.trim(), hora, duracion, subtareas });
+      onGuardar({ categoria, seccion: seccion.trim(), subseccion: subseccion.trim(), tarea: tarea.trim(), hora, duracion, subtareas, _aviso });
     }
   }
   return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-4 space-y-3", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-orange-700 dark:text-orange-300 font-medium" }, tituloForm || "Nueva actividad de rutina"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "1. Categor\xEDa (\xE1rea)"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
@@ -4846,6 +5146,7 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
           areas: areaList,
           taxonomia,
           objetivos,
+          avisoInicial: avisoDe(`${(g.dias || [])[0] || "Monday"}::gen-${g.id}`),
           tituloForm: "Editar actividad general",
           onGuardar: (item) => {
             editarRutinaGeneral(g.id, item);
@@ -4929,6 +5230,7 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
           areas: areaList,
           taxonomia,
           objetivos,
+          avisoInicial: avisoDe(`${sel}::${b.id}`),
           tituloForm: `Editar actividad \u2014 ${selDayFull}`,
           onGuardar: (item) => {
             guardarBloqueDia(sel, b.id, item);
@@ -6626,6 +6928,7 @@ const AYUDA = {
       ["C\xEDrculo a la izquierda", "tacha la actividad como hecha. Se limpia solo al empezar la semana."],
       ["Lapicito", "cambia esta actividad S\xD3LO para esta semana. La rutina no se toca."],
       ["+ Agregar", "crea una actividad suelta para hoy. Se borra con \u201CReiniciar semana\u201D."],
+      ["Avisarme antes de que empiece", "casillero dentro del formulario: prende la notificaci\xF3n de esa actividad y deja elegir cu\xE1ntos minutos antes. La campanita \u{1F514} hace lo mismo sobre una actividad ya creada."],
       ["Checkbox de subtarea", "marca un paso dentro del bloque; se ve igual ac\xE1, en Semana y en Obj. semanales."]
     ],
     reglas: [
@@ -6634,13 +6937,20 @@ const AYUDA = {
     ]
   },
   organizar: {
-    que: "El tablero para repartir los objetivos de la semana entre los d\xEDas.",
+    que: "El calendario del mes y el tablero para repartir los objetivos de la semana entre los d\xEDas.",
     botones: [
+      ["Nuevo evento", "carga algo que pasa UNA vez, en una fecha: una rendida, un turno m\xE9dico, una reuni\xF3n. Se clasifica con \xE1rea \u203A secci\xF3n \u203A subsecci\xF3n como todo lo dem\xE1s."],
+      ["Click en un d\xEDa del mes", "abre lo que hay ese d\xEDa y ofrece cargarle un evento."],
+      ["Lapicito sobre un evento", "lo edita o lo elimina."],
       ["Arrastrar una tarjeta", "la asigna a ese d\xEDa."],
       ["\u2715 sobre una tarjeta asignada", "la devuelve al pool sin d\xEDa."],
       ["Ver en Mi d\xEDa \u2192", "salta a la jornada ya armada."]
     ],
-    reglas: ["Ac\xE1 se decide el QU\xC9 y el CU\xC1NDO grueso. La hora exacta se pone en Obj. semanales."]
+    reglas: [
+      "El calendario del mes se lee de lunes a domingo.",
+      "Un evento aparece en Mi d\xEDa y en Semana el d\xEDa de su fecha y manda sobre la rutina en esa franja; no se repite.",
+      "Ac\xE1 se decide el QU\xC9 y el CU\xC1NDO grueso. La hora exacta se pone en Obj. semanales."
+    ]
   },
   semana: {
     que: "La grilla de los 7 d\xEDas por franja horaria. Sirve para ver el equilibrio de la semana de un vistazo.",
@@ -6733,7 +7043,7 @@ const TOUR = [
   { tab: "dia", titulo: "Mi d\xEDa \u2014 ac\xE1 se ejecuta", texto: "La jornada en orden. Tach\xE1 con el c\xEDrculo de la izquierda. El lapicito cambia la actividad S\xD3LO por esta semana: su rutina de fondo queda intacta." },
   { tab: "rutina", titulo: "Rutina \u2014 la columna vertebral", texto: "Su semana tipo. \u201CGeneral\u201D son las actividades que se repiten en varios d\xEDas; las pesta\xF1as de d\xEDa son lo propio de cada jornada. Lo que edite ac\xE1 es permanente." },
   { tab: "objetivos", titulo: "Obj. semanales \u2014 lo concreto", texto: "Los objetivos de esta semana con su prioridad. El \xEDcono de calendario les asigna d\xEDa y hora; con hora, el objetivo manda sobre la rutina." },
-  { tab: "organizar", titulo: "Organizar \u2014 repartir la semana", texto: "Arrastre cada objetivo al d\xEDa que le corresponda. Lo que quede sin d\xEDa se queda esperando en el pool." },
+  { tab: "organizar", titulo: "Organizar \u2014 el mes y la semana", texto: "El calendario del mes, de lunes a domingo. Con \u201CNuevo evento\u201D carga lo que pasa una sola vez \u2014una rendida, un turno m\xE9dico\u2014 con su \xE1rea, secci\xF3n y subsecci\xF3n. Abajo, arrastre cada objetivo al d\xEDa que le corresponda." },
   { tab: "semana", titulo: "Semana \u2014 el conjunto", texto: "Los siete d\xEDas por franja. Un click en un bloque concreta qu\xE9 hace esa semana en esa franja; un click en una celda vac\xEDa crea una actividad de ese d\xEDa." },
   { tab: "largoplazo", titulo: "I have a dream \u2014 el norte", texto: "\xC1reas, secciones y objetivos grandes. Todo lo dem\xE1s elige de ac\xE1 su categor\xEDa, as\xED que conviene tenerlo ordenado." },
   { tab: "dia", titulo: "Y si algo no se entiende\u2026", texto: "Arriba de cada pesta\xF1a hay un bot\xF3n \u201C\xBFC\xF3mo funciona\u2026?\u201D con qu\xE9 hace cada bot\xF3n y las reglas de oro. Desde ah\xED puede volver a lanzar este recorrido cuando quiera." }
@@ -6795,6 +7105,7 @@ function App() {
   const [bloquesHechos, setBloquesHechos] = useState({});
   const [rutinaGeneral, setRutinaGeneral] = useState([]);
   const [recurrentes, setRecurrentes] = useState(() => usaPlantilla() ? RECURRENTES_DEFAULT : []);
+  const [eventos, setEventos] = useState([]);
   const [taxonomia, setTaxonomia] = useState(() => usaPlantilla() ? TAXONOMIA_DEFAULT : []);
   const [lpModel, setLpModel] = useState(LP_MODEL_VACIO);
   const [lpListo, setLpListo] = useState(false);
@@ -6900,6 +7211,15 @@ function App() {
       });
       if (podadas > 0) saveState("martin:semana_overrides", SEMANA_OVERRIDES);
       RUTINA_GENERAL = await loadState("martin:rutina_general", []);
+      {
+        const evGuardados = await loadState("martin:eventos", []);
+        const limite = /* @__PURE__ */ new Date();
+        limite.setFullYear(limite.getFullYear() - 1);
+        const corte = fechaISOde(limite);
+        const vivos = (Array.isArray(evGuardados) ? evGuardados : []).filter((e) => e && e.fecha && e.fecha >= corte);
+        EVENTOS = vivos;
+        if (vivos.length !== (evGuardados || []).length) saveState("martin:eventos", vivos);
+      }
       const recsSaved = await loadState("martin:recurrentes", null);
       RECURRENTES = recsSaved && Array.isArray(recsSaved) && recsSaved.length ? recsSaved : usaPlantilla() ? RECURRENTES_DEFAULT : [];
       const taxSaved = await loadState("martin:taxonomia", null);
@@ -6936,6 +7256,7 @@ function App() {
       setTaxonomia(taxProyectada);
       setRutinaGeneral(RUTINA_GENERAL);
       setRecurrentes(RECURRENTES);
+      setEventos(EVENTOS);
       setBloquesHechos(await loadState("martin:bloques_hechos", {}));
       let c = await loadState("martin:checklists", {});
       const f = await loadState("martin:feedback", {});
@@ -7035,6 +7356,11 @@ function App() {
     setRutinaTick((t) => t + 1);
   }
   function editarBloqueSemana(dayKey, blockId, cambios) {
+    if (cambios && cambios._aviso) {
+      const { _aviso, ...resto } = cambios;
+      aplicarAviso(`${dayKey}::${blockId}`, { titulo: resto.titulo, hora: resto.hora, dia: dayKey, area: resto.area, duracion: resto.duracion }, _aviso);
+      cambios = resto;
+    }
     if (bloqueEsDeSemana(dayKey, blockId)) {
       editarBloque(dayKey, blockId, cambios);
       return;
@@ -7114,6 +7440,7 @@ function App() {
     setRutinaTick((t) => t + 1);
   }
   function agregarBloqueCustom(dayKey, b) {
+    const aviso = b && b._aviso;
     const nuevo = {
       // origen "semana": lo creó Martín desde Semana o Mi día para ESTA semana,
       // así que es lo que se limpia al reiniciar la semana. `semana` la ata a
@@ -7133,13 +7460,17 @@ function App() {
     };
     BLOQUES_CUSTOM[dayKey] = [...BLOQUES_CUSTOM[dayKey] || [], nuevo];
     saveState("martin:bloques_custom", BLOQUES_CUSTOM);
+    aplicarAviso(`${dayKey}::${nuevo.id}`, { titulo: nuevo.titulo, hora: nuevo.hora, dia: dayKey, area: nuevo.area, duracion: nuevo.duracion }, aviso);
     setRutinaTick((t) => t + 1);
   }
   function agregarBloqueMultidia(dias, item) {
     const base = { origen: "rutina", hora: item.hora, duracion: item.duracion, categoria: item.categoria || item.area || "Personal", seccion: item.seccion || "", subseccion: item.subseccion || "", tarea: item.tarea || "", titulo: item.tarea || item.seccion || "", area: item.categoria || item.area || "Personal", subtareas: item.subtareas || [] };
     (dias && dias.length ? dias : [currentDayKey(now)]).forEach((d, i) => {
       const hv = item.horarios && item.horarios[d] || {};
-      BLOQUES_CUSTOM[d] = [...BLOQUES_CUSTOM[d] || [], { ...base, hora: hv.hora || base.hora, duracion: hv.duracion || base.duracion, id: "custom-" + Date.now() + "-" + i }];
+      const id = "custom-" + Date.now() + "-" + i;
+      const hora = hv.hora || base.hora;
+      BLOQUES_CUSTOM[d] = [...BLOQUES_CUSTOM[d] || [], { ...base, hora, duracion: hv.duracion || base.duracion, id }];
+      aplicarAviso(`${d}::${id}`, { titulo: base.titulo, hora, dia: d, area: base.area, duracion: hv.duracion || base.duracion }, item && item._aviso);
     });
     saveState("martin:bloques_custom", BLOQUES_CUSTOM);
     setRutinaTick((t) => t + 1);
@@ -7158,7 +7489,7 @@ function App() {
       Object.keys(horarios).forEach((d) => {
         if (!dias.includes(d)) delete horarios[d];
       });
-      editarRutinaGeneral(realId, { categoria: base.categoria, seccion: base.seccion, subseccion: base.subseccion, tarea: base.tarea, subtareas: base.subtareas, dias: dias && dias.length ? dias : g.dias, horarios, hora: base.hora, duracion: base.duracion });
+      editarRutinaGeneral(realId, { categoria: base.categoria, seccion: base.seccion, subseccion: base.subseccion, tarea: base.tarea, subtareas: base.subtareas, dias: dias && dias.length ? dias : g.dias, horarios, hora: base.hora, duracion: base.duracion, _aviso: item && item._aviso });
       let limpio = false;
       dias.concat([origen]).forEach((d) => {
         const kk = d + "::" + id;
@@ -7188,11 +7519,19 @@ function App() {
         subtareas: base.subtareas
       } : { ...RUTINA_OVERRIDES[k] || {}, oculto: true };
     }
+    if (!id.startsWith("custom-") && dias.includes(origen)) {
+      const hOr = item.horarios && item.horarios[origen] || {};
+      aplicarAviso(`${origen}::${id}`, { titulo: base.titulo, hora: hOr.hora || base.hora, dia: origen, area: base.area, duracion: hOr.duracion || base.duracion }, item && item._aviso);
+    }
     dias.forEach((d, i) => {
       if (!id.startsWith("custom-") && d === origen) return;
       const hv = item.horarios && item.horarios[d] || {};
-      BLOQUES_CUSTOM[d] = [...BLOQUES_CUSTOM[d] || [], { ...base, hora: hv.hora || base.hora, duracion: hv.duracion || base.duracion, id: "custom-" + Date.now() + "-" + i }];
+      const nid = "custom-" + Date.now() + "-" + i;
+      const hora = hv.hora || base.hora;
+      BLOQUES_CUSTOM[d] = [...BLOQUES_CUSTOM[d] || [], { ...base, hora, duracion: hv.duracion || base.duracion, id: nid }];
+      aplicarAviso(`${d}::${nid}`, { titulo: base.titulo, hora, dia: d, area: base.area, duracion: hv.duracion || base.duracion }, item && item._aviso);
     });
+    if (id.startsWith("custom-") && window.JarvisNotif) window.JarvisNotif.desmarcar(`${origen}::${id}`);
     saveState("martin:bloques_custom", BLOQUES_CUSTOM);
     saveState("martin:rutina_overrides", RUTINA_OVERRIDES);
     setRutinaTick((t) => t + 1);
@@ -7230,10 +7569,12 @@ function App() {
     });
   }
   function agregarObjetivoSemanal(obj) {
+    const { _aviso, ...limpio } = obj || {};
     const nuevo = materializarRecurrencia(
-      [{ ...obj, id: "man-" + Date.now(), manual: true }],
+      [{ ...limpio, id: "man-" + Date.now(), manual: true }],
       /* @__PURE__ */ new Date()
     )[0];
+    aplicarAviso(`obj::${nuevo.id}`, { titulo: itemTitulo(nuevo), hora: nuevo.hora, dia: nuevo.dia, area: nuevo.categoria, duracion: nuevo.duracion }, _aviso);
     setManuales((prev) => {
       const next = [...prev, nuevo];
       saveState("martin:objetivos_manuales", next);
@@ -7247,14 +7588,76 @@ function App() {
     saveState("martin:rutina_general", next);
     setRutinaTick((t) => t + 1);
   }
+  function avisoRutinaGeneral(g, aviso) {
+    if (!g) return;
+    DIAS.forEach((d) => {
+      const clave = `${d.key}::gen-${g.id}`;
+      const activo = Array.isArray(g.dias) && g.dias.includes(d.key);
+      if (!activo) {
+        if (window.JarvisNotif) window.JarvisNotif.desmarcar(clave);
+        return;
+      }
+      const hv = g.horarios && g.horarios[d.key] || {};
+      aplicarAviso(clave, { titulo: itemTitulo(g), hora: hv.hora || g.hora, dia: d.key, area: itemArea(g), duracion: hv.duracion || g.duracion }, aviso);
+    });
+  }
   function agregarRutinaGeneral(item) {
-    persistRutinaGeneral([...rutinaGeneral, { ...item, id: "gen-" + Date.now() }]);
+    const { _aviso, ...limpio } = item || {};
+    const nuevo = { ...limpio, id: "gen-" + Date.now() };
+    persistRutinaGeneral([...rutinaGeneral, nuevo]);
+    if (_aviso) avisoRutinaGeneral(nuevo, _aviso);
   }
   function editarRutinaGeneral(id, cambios) {
-    persistRutinaGeneral(rutinaGeneral.map((g) => g.id === id ? { ...g, ...cambios } : g));
+    const { _aviso, ...limpio } = cambios || {};
+    const next = rutinaGeneral.map((g) => g.id === id ? { ...g, ...limpio } : g);
+    persistRutinaGeneral(next);
+    if (_aviso) avisoRutinaGeneral(next.find((g) => g.id === id), _aviso);
   }
   function eliminarRutinaGeneral(id) {
     persistRutinaGeneral(rutinaGeneral.filter((g) => g.id !== id));
+  }
+  function persistEventos(next) {
+    EVENTOS = next;
+    setEventos(next);
+    saveState("martin:eventos", next);
+    setRutinaTick((t) => t + 1);
+  }
+  function agregarEvento(ev) {
+    const { _aviso, ...limpio } = ev || {};
+    const nuevo = { ...limpio, id: "evt-" + Date.now(), hecho: false };
+    persistEventos([...EVENTOS || [], nuevo]);
+    aplicarAviso(`evt::${nuevo.id}`, {
+      titulo: nuevo.titulo,
+      hora: nuevo.hora,
+      fecha: nuevo.fecha,
+      dia: DIAS[fechaDeISO(nuevo.fecha).getDay()].key,
+      area: nuevo.categoria,
+      duracion: nuevo.duracion
+    }, _aviso);
+    return nuevo;
+  }
+  function editarEvento(id, cambios) {
+    const { _aviso, ...limpio } = cambios || {};
+    const next = (EVENTOS || []).map((e) => e.id === id ? { ...e, ...limpio } : e);
+    persistEventos(next);
+    const ev = next.find((e) => e.id === id);
+    if (ev && _aviso) {
+      aplicarAviso(`evt::${id}`, {
+        titulo: ev.titulo,
+        hora: ev.hora,
+        fecha: ev.fecha,
+        dia: DIAS[fechaDeISO(ev.fecha).getDay()].key,
+        area: ev.categoria,
+        duracion: ev.duracion
+      }, _aviso);
+    }
+  }
+  function eliminarEvento(id) {
+    persistEventos((EVENTOS || []).filter((e) => e.id !== id));
+    if (window.JarvisNotif) window.JarvisNotif.desmarcar(`evt::${id}`);
+  }
+  function toggleEventoHecho(id) {
+    persistEventos((EVENTOS || []).map((e) => e.id === id ? { ...e, hecho: !e.hecho } : e));
   }
   function persistRecurrentes(next) {
     RECURRENTES = next;
@@ -7549,7 +7952,11 @@ function App() {
       rutinaTick,
       recurrentes,
       setRecurrentes: persistRecurrentes,
-      taxonomia
+      taxonomia,
+      eventos,
+      agregarEvento,
+      editarEvento,
+      eliminarEvento
     }
   ), tab === "semana" && /* @__PURE__ */ React.createElement(
     VistaSemanal,
@@ -7644,7 +8051,7 @@ function App() {
     },
     /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 500 } }, "La nube manda"),
     /* @__PURE__ */ React.createElement("span", { className: "block text-[11.5px] text-neutral-500 mt-0.5" }, "Descarta lo local de este aparato y trae la versi\xF3n guardada en tu cuenta.")
-  ))))), /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-6 text-center text-xs text-neutral-400" }, /* @__PURE__ */ React.createElement("span", { className: "font-serif italic" }, '"Detesto la mentira. Vivir en lo real."')))), tourPaso !== null && /* @__PURE__ */ React.createElement(TourGuiado, { paso: tourPaso, setPaso: setTourPaso, onCerrar: cerrarTour }));
+  ))))))), tourPaso !== null && /* @__PURE__ */ React.createElement(TourGuiado, { paso: tourPaso, setPaso: setTourPaso, onCerrar: cerrarTour }));
 }
 (function() {
   function render() {
