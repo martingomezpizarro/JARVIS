@@ -2098,56 +2098,38 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
   finales.sort((a, b) => timeToMinutes(a.hora) - timeToMinutes(b.hora));
   const prioritarios = finales.filter((it) => it.prioritario);
   if (prioritarios.length === 0) return finales;
-  const resultado = [];
   finales.forEach((it) => {
-    if (it.prioritario) {
-      resultado.push(it);
-      return;
-    }
-    let tramos = [{ ini: timeToMinutes(it.hora), fin: timeToMinutes(it.hora) + (it.duracion || 30) }];
-    prioritarios.forEach((p) => {
-      const pIni = timeToMinutes(p.hora);
-      const pFin = pIni + (p.duracion || 30);
-      const next = [];
-      tramos.forEach((t) => {
-        if (pFin <= t.ini || pIni >= t.fin) {
-          next.push(t);
-          return;
-        }
-        if (pIni > t.ini) next.push({ ini: t.ini, fin: pIni });
-        if (pFin < t.fin) next.push({ ini: pFin, fin: t.fin });
-      });
-      tramos = next;
+    if (it.prioritario) return;
+    const ini = timeToMinutes(it.hora), fin = ini + (it.duracion || 30);
+    const encima = prioritarios.filter((p) => {
+      const pIni = timeToMinutes(p.hora), pFin = pIni + (p.duracion || 30);
+      return ini < pFin && fin > pIni;
     });
-    const utiles = tramos.filter((t) => t.fin - t.ini >= SLOT_MIN);
-    if (utiles.length === 0) {
-      const ini = timeToMinutes(it.hora);
-      const dueno = prioritarios.find((p) => {
-        const pIni = timeToMinutes(p.hora);
-        return ini >= pIni && ini < pIni + (p.duracion || 30);
-      });
-      if (dueno && (it.subtareas || []).length) {
-        dueno.subtareas = (dueno.subtareas || []).concat(
-          it.subtareas.map((s) => ({ ...s, heredadaDe: it.titulo }))
-        );
-      }
-      if (dueno && (it.subareas || []).length && !(dueno.subareas || []).length) {
-        dueno.subareas = it.subareas;
-      }
-      return;
-    }
-    utiles.forEach((t, i) => {
-      resultado.push({
-        ...it,
-        id: i === 0 ? it.id : `${it.id}__c${i}`,
-        hora: minutesToTime(t.ini),
-        duracion: t.fin - t.ini,
-        cedido: utiles.length > 1 || t.fin - t.ini !== (it.duracion || 30)
-      });
+    if (!encima.length) return;
+    it.pisadoPor = encima.map((p) => p.titulo);
+    encima.forEach((p) => {
+      p.pisaA = (p.pisaA || []).concat(it.titulo);
     });
   });
-  resultado.sort((a, b) => timeToMinutes(a.hora) - timeToMinutes(b.hora));
-  return resultado;
+  return finales;
+}
+function idBase(id) {
+  return String(id == null ? "" : id).replace(/__c\d+$/, "");
+}
+function choquesDeAgenda(agenda) {
+  const orden = (agenda || []).slice().sort((x, y) => timeToMinutes(x.hora) - timeToMinutes(y.hora));
+  const out = [];
+  for (let i = 0; i < orden.length; i++) {
+    const a = orden[i];
+    const aIni = timeToMinutes(a.hora), aFin = aIni + (a.duracion || 0);
+    for (let j = i + 1; j < orden.length; j++) {
+      const b = orden[j];
+      const bIni = timeToMinutes(b.hora), bFin = bIni + (b.duracion || 0);
+      if (bIni >= aFin) break;
+      if (aIni < bFin && aFin > bIni) out.push({ a, b, min: Math.min(aFin, bFin) - Math.max(aIni, bIni) });
+    }
+  }
+  return out;
 }
 function vigenciaDeTaxonomia(taxonomia) {
   const areas = /* @__PURE__ */ new Set();
@@ -3285,8 +3267,9 @@ NO se toca: la Rutina ni los Objetivos semanales.
             },
             title: (editMode ? `Editar: ${titulo} \u2014 arrastr\xE1 el borde inferior para cambiar la duraci\xF3n` : `${[bloque.subarea, bloque.titulo].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" \u203A ")} \xB7 ${bloque.hora} \xB7 ${bloque.duracion} min \xB7 ${bloque.area}`) + (esObjetivo ? `
 \u2605 Objetivo semanal \u2014 tiene prioridad sobre la rutina.` : bloque.tipo === "custom" ? `
-Actividad propia de la semana \u2014 pisa la rutina sin borrarla.` : "") + (bloque.cedido ? `
-(la rutina cedi\xF3 parte de esta franja a un objetivo semanal)` : "") + (muerta ? `
+Actividad propia de la semana \u2014 pisa la rutina sin borrarla.` : "") + ((bloque.pisadoPor || []).length ? `
+\u26A0 Se pisa en el horario con: ${bloque.pisadoPor.join(", ")} \u2014 nadie se movi\xF3, decid\xED vos cu\xE1l corr\xE9s.` : "") + ((bloque.pisaA || []).length ? `
+\u26A0 Se pisa en el horario con: ${bloque.pisaA.join(", ")} \u2014 nadie se movi\xF3, decid\xED vos cu\xE1l corr\xE9s.` : "") + (muerta ? `
 \u26A0 El \xE1rea "${bloque.area}" ya no existe en tu taxonom\xEDa \u2014 reclasificala desde Rutina.` : "") + (bloque.recortado ? `
 (se solapa con la actividad siguiente: el alto est\xE1 recortado, dura ${bloque.duracion} min)` : "") + ((bloque.subtareas || []).length ? `
 
@@ -5276,21 +5259,18 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
     () => Array.from(new Set(obsoletos.map((b) => b.area))),
     [obsoletos]
   );
-  const choques = useMemo(() => {
-    const orden = agenda.slice().sort((x, y) => timeToMinutes(x.hora) - timeToMinutes(y.hora));
-    const out = [];
-    for (let i = 0; i < orden.length; i++) {
-      const a = orden[i];
-      const aIni = timeToMinutes(a.hora), aFin = aIni + (a.duracion || 0);
-      for (let j = i + 1; j < orden.length; j++) {
-        const b = orden[j];
-        const bIni = timeToMinutes(b.hora), bFin = bIni + (b.duracion || 0);
-        if (bIni >= aFin) break;
-        if (aIni < bFin && aFin > bIni) out.push({ a, b, min: Math.min(aFin, bFin) - Math.max(aIni, bIni) });
-      }
-    }
-    return out;
-  }, [agenda]);
+  const choques = useMemo(() => choquesDeAgenda(agenda), [agenda]);
+  const choquesPorDia = useMemo(() => {
+    const m = {};
+    DIAS.forEach((d) => {
+      m[d.key] = choquesDeAgenda(buildDayAgenda(d.key, [])).length;
+    });
+    return m;
+  }, [rutinaTick]);
+  const totalChoques = useMemo(
+    () => Object.values(choquesPorDia).reduce((a, b) => a + b, 0),
+    [choquesPorDia]
+  );
   const selDayFull = ((_a = DIAS.find((d) => d.key === sel)) == null ? void 0 : _a.full) || "";
   return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Rutina \u2014 columna vertebral"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, /* @__PURE__ */ React.createElement("strong", null, "General"), ": actividades que se repiten en los d\xEDas que marques. ", /* @__PURE__ */ React.createElement("strong", null, "Cada d\xEDa"), ": lo espec\xEDfico de esa jornada. Edit\xE1 cualquier tarea con su clasificaci\xF3n y movela/repetila en otros d\xEDas. Todo se ve en Mi d\xEDa y en Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-1" }, /* @__PURE__ */ React.createElement(
     "button",
@@ -5307,6 +5287,7 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
   ), DIAS.map((d) => {
     const isSelected = d.key === sel;
     const isToday = d.key === currentDayKey(now);
+    const nCh = choquesPorDia[d.key] || 0;
     return /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -5316,9 +5297,11 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
           setEditandoId(null);
           setAddForm(false);
         },
-        className: `px-3.5 py-2 rounded-lg text-sm font-medium transition-all shrink-0 ${isSelected ? "bg-amber-500 text-neutral-950" : isToday ? "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-900 text-neutral-600 dark:text-neutral-400"}`
+        title: nCh ? `${nCh} superposici\xF3n(es) horaria(s) el ${d.full.toLowerCase()}` : void 0,
+        className: `px-3.5 py-2 rounded-lg text-sm font-medium transition-all shrink-0 flex items-center gap-1.5 ${isSelected ? "bg-amber-500 text-neutral-950" : nCh ? "bg-red-50 dark:bg-red-950/25 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-900" : isToday ? "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-900 text-neutral-600 dark:text-neutral-400"}`
       },
-      d.full
+      d.full,
+      nCh > 0 && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isSelected ? "bg-red-600 text-white" : "bg-red-600 text-white"}` }, "\u26A0 ", nCh)
     );
   })), esGeneral && /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/10 p-3 flex items-center justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, (rutinaGeneral || []).length, " actividades generales \xB7 se repiten en los d\xEDas marcados"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "Ordenar por:"), [{ k: "hora", t: "Hora" }, { k: "area", t: "\xC1rea" }].map((op) => /* @__PURE__ */ React.createElement(
     "button",
@@ -5397,7 +5380,7 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
       durLabel(min),
       muerta ? " \u26A0" : ""
     );
-  }))), choques.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-sky-300/50 dark:border-sky-900/50 bg-sky-50/50 dark:bg-sky-950/15 p-3 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(AlertCircle, { size: 14, className: "text-sky-600" }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-sky-700 dark:text-sky-300" }, "Superposici\xF3n horaria \u2014 ", choques.length, " ", choques.length === 1 ? "cruce" : "cruces", " el ", selDayFull.toLowerCase())), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, choques.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "text-xs bg-white/60 dark:bg-neutral-950/60 rounded-md px-2 py-1 flex items-baseline gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.a.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.a.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "se pisa con"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.b.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "\xB7 ", durLabel(c.min), " en com\xFAn")))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500" }, "Es s\xF3lo un aviso: no se cambi\xF3 nada. Si una de las dos tiene que correrse, abrila con el lapicito.")), (() => {
+  }))), choques.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-red-400 dark:border-red-800 bg-red-50 dark:bg-red-950/25 p-3.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(AlertCircle, { size: 16, className: "text-red-600 dark:text-red-400 shrink-0" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-red-700 dark:text-red-300" }, "\u26A0 Se est\xE1n pisando ", choques.length, " ", choques.length === 1 ? "par de actividades" : "pares de actividades", " el ", selDayFull.toLowerCase())), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, choques.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "text-xs bg-white/70 dark:bg-neutral-950/60 rounded-md px-2 py-1.5 flex items-baseline gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.a.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.a.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.a.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400 font-medium" }, "se pisa con"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.b.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.b.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400" }, "\xB7 ", durLabel(c.min), " en com\xFAn")))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-600 dark:text-neutral-400" }, /* @__PURE__ */ React.createElement("b", null, "Las dos quedaron como las guardaste"), ": no se movi\xF3 ni se acort\xF3 ninguna. Si una tiene que correrse, abrila con el lapicito y cambiale la hora vos.")), (() => {
     const editadas = agenda.filter((b) => b.editado);
     const propias = agenda.filter((b) => b.tipo === "custom");
     const ocultos = contarOcultosRutina ? contarOcultosRutina(sel) : 0;
@@ -5447,7 +5430,15 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
             setEditandoId(null);
           },
           onEliminar: () => {
-            if (confirm("\xBFEliminar / ocultar esta actividad?")) {
+            let msg = `\xBFSacar "${b.titulo}" del ${selDayFull.toLowerCase()}?`;
+            if (String(b.id).startsWith("gen-")) {
+              const g = (rutinaGeneral || []).find((x) => x.id === String(b.id).replace(/^gen-/, ""));
+              const otros = (g && g.dias || []).filter((d) => d !== sel);
+              msg = otros.length ? `\xBFSacar "${b.titulo}" del ${selDayFull.toLowerCase()}?
+
+Sigue estando en: ${DIAS.filter((d) => otros.includes(d.key)).map((d) => d.full).join(", ")}.` : `\xBFEliminar "${b.titulo}"? Es el \xFAnico d\xEDa que le queda, as\xED que desaparece del todo.`;
+            }
+            if (confirm(msg)) {
               eliminarBloqueDia(sel, b.id);
               setEditandoId(null);
             }
@@ -7187,6 +7178,7 @@ const AYUDA = {
       ["Reponerlas", "vuelve a mostrar las actividades de la rutina que hab\xEDas ocultado."]
     ],
     reglas: [
+      "Si dos actividades se pisan en el reloj, la app NO mueve ni acorta ninguna: te lo avisa con \u26A0 en la pesta\xF1a del d\xEDa y con la alarma roja arriba. Cu\xE1l se corre lo decid\xEDs vos con el lapicito.",
       "Superposici\xF3n horaria y Capas son dos avisos distintos: el primero dice que dos actividades se pisan en el reloj; el segundo, que hay cambios guardados encima de la estructura base.",
       "El Sheets \u201C2026\u201D es la base al sincronizar; tus ediciones se guardan aparte y se re-aplican encima."
     ]
@@ -7194,7 +7186,7 @@ const AYUDA = {
   objetivos: {
     que: "Los objetivos concretos de esta semana, con prioridad, secci\xF3n y \u2014si quer\xE9s\u2014 d\xEDa y hora.",
     botones: [
-      ["Calendario con +", "asigna d\xEDa y hora al objetivo. Con hora, manda sobre la rutina en Semana."],
+      ["Calendario con +", "asigna d\xEDa y hora al objetivo. Si cae encima de un bloque de rutina, los dos quedan como est\xE1n y Rutina te avisa del cruce."],
       ["Hoja de papel", "abre el objetivo completo: categor\xEDa, secci\xF3n, subtareas, prioridad."],
       ["Archivo", "guarda los completados fuera de la lista sin perderlos."],
       ["C\xEDrculo", "lo da por cumplido; si est\xE1 atado a un objetivo de largo plazo, le avanza el hito."]
@@ -7397,6 +7389,19 @@ function App() {
       objOverridesRef.current = await loadState("martin:objetivos_overrides", {});
       objOcultosRef.current = await loadState("martin:objetivos_ocultos", []);
       RUTINA_OVERRIDES = await loadState("martin:rutina_overrides", {});
+      {
+        let fantasmas = 0;
+        Object.keys(RUTINA_OVERRIDES).forEach((k) => {
+          if (/__c\d+$/.test(k)) {
+            delete RUTINA_OVERRIDES[k];
+            fantasmas++;
+          }
+        });
+        if (fantasmas) {
+          console.log("[Jarvis] limpiadas", fantasmas, "ediciones de bloques partidos que ya no existen");
+          saveState("martin:rutina_overrides", RUTINA_OVERRIDES);
+        }
+      }
       BLOQUES_CUSTOM = await loadState("martin:bloques_custom", {});
       {
         let migradas = 0;
@@ -7588,7 +7593,7 @@ function App() {
     setRutinaTick((t) => t + 1);
   }
   function quitarOverrideRutina(dayKey, blockId) {
-    const k = dayKey + "::" + blockId;
+    const k = dayKey + "::" + idBase(blockId);
     if (!RUTINA_OVERRIDES[k]) return;
     delete RUTINA_OVERRIDES[k];
     saveState("martin:rutina_overrides", RUTINA_OVERRIDES);
@@ -7617,7 +7622,7 @@ function App() {
   function moverBloqueASemana(dayKey, blockId) {
     const list = BLOQUES_CUSTOM[dayKey] || [];
     BLOQUES_CUSTOM[dayKey] = list.map(
-      (b) => b.id === String(blockId) ? { ...b, origen: "semana", semana: semanaKeyDe(/* @__PURE__ */ new Date()) } : b
+      (b) => b.id === idBase(blockId) ? { ...b, origen: "semana", semana: semanaKeyDe(/* @__PURE__ */ new Date()) } : b
     );
     saveState("martin:bloques_custom", BLOQUES_CUSTOM);
     setRutinaTick((t) => t + 1);
@@ -7686,7 +7691,7 @@ function App() {
     setRutinaTick((t) => t + 1);
   }
   function guardarBloqueDia(origen, bloqueId, item) {
-    const id = String(bloqueId);
+    const id = idBase(bloqueId);
     const dias = item.dias && item.dias.length ? item.dias : [origen];
     const base = { origen: "rutina", hora: item.hora, duracion: item.duracion, categoria: item.categoria || "Personal", seccion: item.seccion || "", subseccion: item.subseccion || "", tarea: item.tarea || "", titulo: item.tarea || item.seccion || "", area: item.categoria || "Personal", subtareas: item.subtareas || [] };
     if (id.startsWith("gen-")) {
@@ -7747,9 +7752,21 @@ function App() {
     setRutinaTick((t) => t + 1);
   }
   function eliminarBloqueDia(origen, bloqueId) {
-    const id = String(bloqueId);
+    const id = idBase(bloqueId);
     if (id.startsWith("gen-")) {
-      eliminarRutinaGeneral(id.replace(/^gen-/, ""));
+      const realId = id.replace(/^gen-/, "");
+      const g = (rutinaGeneral || []).find((x) => x.id === realId);
+      if (!g) return;
+      const quedan = (g.dias || []).filter((d) => d !== origen);
+      if (!quedan.length) {
+        eliminarRutinaGeneral(realId);
+        return;
+      }
+      const horarios = { ...g.horarios || {} };
+      delete horarios[origen];
+      editarRutinaGeneral(realId, { dias: quedan, horarios });
+      if (window.JarvisNotif) window.JarvisNotif.desmarcar(`${origen}::${id}`);
+      setRutinaTick((t) => t + 1);
       return;
     }
     if (id.startsWith("custom-")) {
