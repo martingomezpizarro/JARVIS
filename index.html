@@ -2131,6 +2131,27 @@ function choquesDeAgenda(agenda) {
   }
   return out;
 }
+const AVISOS = {
+  choques: { titulo: "Superposici\xF3n horaria" },
+  capas: { titulo: "Capas" },
+  obsoletos: { titulo: "\xC1rea obsoleta" }
+};
+function firmaChoques(choques) {
+  return (choques || []).map((c) => [c.a.id, c.b.id, c.min].join("|")).sort().join(";");
+}
+function firmaCapas(editadas, propias, ocultos) {
+  return [
+    (editadas || []).map((b) => b.id + "@" + b.hora).sort().join(","),
+    (propias || []).map((b) => b.id + "@" + b.hora).sort().join(","),
+    "ocultos:" + (ocultos || 0)
+  ].join(";");
+}
+function firmaObsoletos(obsoletos) {
+  return (obsoletos || []).map((b) => b.id + "@" + b.area).sort().join(",");
+}
+function avisoDescartado(mapa, dia, tipo, firma) {
+  return !!firma && (mapa || {})[dia + "::" + tipo] === firma;
+}
 function vigenciaDeTaxonomia(taxonomia) {
   const areas = /* @__PURE__ */ new Set();
   const secs = /* @__PURE__ */ new Set();
@@ -5210,7 +5231,7 @@ function TareaRutinaForm({ inicial, onGuardar, onCancelar, onEliminar, objetivos
     return /* @__PURE__ */ React.createElement("div", { key: d.key, className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs w-20 text-neutral-500" }, d.full), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: hv.hora, onChange: (e) => updHorario(d.key, "hora", e.target.value), className: inputCls }), /* @__PURE__ */ React.createElement("select", { value: hv.duracion, onChange: (e) => updHorario(d.key, "duracion", Number(e.target.value)), className: inputCls }, DURACIONES.map((x) => /* @__PURE__ */ React.createElement("option", { key: x, value: x }, durLabel(x)))));
   })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Tareas de la actividad ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(una por l\xEDnea \u2014 checklist dentro del bloque)")), /* @__PURE__ */ React.createElement("textarea", { value: subText, onChange: (e) => setSubText(e.target.value), rows: 2, className: `${inputCls} w-full font-mono text-xs` })), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("button", { onClick: guardar, className: "px-3 py-1.5 rounded-md bg-orange-600 text-white text-sm font-medium" }, "Guardar"), onEliminar && /* @__PURE__ */ React.createElement("button", { onClick: onEliminar, className: "px-3 py-1.5 rounded-md border border-red-200 dark:border-red-900 text-red-500 text-sm hover:bg-red-50 dark:hover:bg-red-950/30" }, "Eliminar"), /* @__PURE__ */ React.createElement("button", { onClick: onCancelar, className: "px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm" }, "Cancelar")));
 }
-function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, editarRutinaGeneral, eliminarRutinaGeneral, agregarBloqueMultidia, guardarBloqueDia, eliminarBloqueDia, objetivos, taxonomia, quitarOverrideRutina, moverBloqueASemana, contarOcultosRutina, reponerOcultosRutina }) {
+function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, editarRutinaGeneral, eliminarRutinaGeneral, agregarBloqueMultidia, guardarBloqueDia, eliminarBloqueDia, objetivos, taxonomia, quitarOverrideRutina, moverBloqueASemana, contarOcultosRutina, reponerOcultosRutina, avisosDescartados, descartarAviso, restaurarAvisos }) {
   var _a;
   const [sel, setSel] = useState(currentDayKey(now));
   const [addForm, setAddForm] = useState(false);
@@ -5263,13 +5284,37 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
   const choquesPorDia = useMemo(() => {
     const m = {};
     DIAS.forEach((d) => {
-      m[d.key] = choquesDeAgenda(buildDayAgenda(d.key, [])).length;
+      const ch = choquesDeAgenda(buildDayAgenda(d.key, []));
+      m[d.key] = avisoDescartado(avisosDescartados, d.key, "choques", firmaChoques(ch)) ? 0 : ch.length;
     });
     return m;
-  }, [rutinaTick]);
-  const totalChoques = useMemo(
-    () => Object.values(choquesPorDia).reduce((a, b) => a + b, 0),
-    [choquesPorDia]
+  }, [rutinaTick, avisosDescartados]);
+  const capasDatos = useMemo(() => {
+    const editadas = agenda.filter((b) => b.editado);
+    const propias = agenda.filter((b) => b.tipo === "custom");
+    const ocultos = contarOcultosRutina ? contarOcultosRutina(sel) : 0;
+    return { editadas, propias, ocultos, hay: !!(editadas.length || propias.length || ocultos) };
+  }, [agenda, sel, contarOcultosRutina, rutinaTick]);
+  const firmas = useMemo(() => ({
+    choques: firmaChoques(choques),
+    capas: firmaCapas(capasDatos.editadas, capasDatos.propias, capasDatos.ocultos),
+    obsoletos: firmaObsoletos(obsoletos)
+  }), [choques, capasDatos, obsoletos]);
+  const oculto = (tipo) => avisoDescartado(avisosDescartados, sel, tipo, firmas[tipo]);
+  const descartar = (tipo) => descartarAviso && descartarAviso(sel, tipo, firmas[tipo]);
+  const descartadosAca = useMemo(() => {
+    const vivos = { choques: choques.length > 0, capas: capasDatos.hay, obsoletos: obsoletos.length > 0 };
+    return Object.keys(AVISOS).filter((t) => vivos[t] && avisoDescartado(avisosDescartados, sel, t, firmas[t]));
+  }, [avisosDescartados, sel, firmas, choques, capasDatos, obsoletos]);
+  const BotonDescartar = ({ tipo, color }) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => descartar(tipo),
+      title: "Descartar este aviso. Vuelve solo si aparece algo nuevo.",
+      "aria-label": "Descartar aviso",
+      className: `ml-auto shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-base leading-none transition-colors ${color}`
+    },
+    "\xD7"
   );
   const selDayFull = ((_a = DIAS.find((d) => d.key === sel)) == null ? void 0 : _a.full) || "";
   return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Rutina \u2014 columna vertebral"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, /* @__PURE__ */ React.createElement("strong", null, "General"), ": actividades que se repiten en los d\xEDas que marques. ", /* @__PURE__ */ React.createElement("strong", null, "Cada d\xEDa"), ": lo espec\xEDfico de esa jornada. Edit\xE1 cualquier tarea con su clasificaci\xF3n y movela/repetila en otros d\xEDas. Todo se ve en Mi d\xEDa y en Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-1" }, /* @__PURE__ */ React.createElement(
@@ -5380,12 +5425,10 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
       durLabel(min),
       muerta ? " \u26A0" : ""
     );
-  }))), choques.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-red-400 dark:border-red-800 bg-red-50 dark:bg-red-950/25 p-3.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(AlertCircle, { size: 16, className: "text-red-600 dark:text-red-400 shrink-0" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-red-700 dark:text-red-300" }, "\u26A0 Se est\xE1n pisando ", choques.length, " ", choques.length === 1 ? "par de actividades" : "pares de actividades", " el ", selDayFull.toLowerCase())), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, choques.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "text-xs bg-white/70 dark:bg-neutral-950/60 rounded-md px-2 py-1.5 flex items-baseline gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.a.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.a.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.a.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400 font-medium" }, "se pisa con"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.b.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.b.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400" }, "\xB7 ", durLabel(c.min), " en com\xFAn")))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-600 dark:text-neutral-400" }, /* @__PURE__ */ React.createElement("b", null, "Las dos quedaron como las guardaste"), ": no se movi\xF3 ni se acort\xF3 ninguna. Si una tiene que correrse, abrila con el lapicito y cambiale la hora vos.")), (() => {
-    const editadas = agenda.filter((b) => b.editado);
-    const propias = agenda.filter((b) => b.tipo === "custom");
-    const ocultos = contarOcultosRutina ? contarOcultosRutina(sel) : 0;
-    if (!editadas.length && !propias.length && !ocultos) return null;
-    return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-300/50 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/15 p-3 space-y-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Layers, { size: 14, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-amber-700 dark:text-amber-300" }, "Capas \u2014 qu\xE9 se guard\xF3 encima de tu rutina el ", selDayFull.toLowerCase())), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 -mt-1" }, "No habla de horarios cruzados: son cambios guardados sobre la estructura base."), editadas.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 mb-1" }, /* @__PURE__ */ React.createElement("strong", null, editadas.length), ' edici\xF3n(es) permanente(s) sobre la rutina. Una concreci\xF3n hecha en Semana NO deber\xEDa llegar ac\xE1: si reconoc\xE9s alguna de estas como "lo que iba a hacer esa semana", deshacela.'), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, editadas.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.id, className: "flex items-center gap-2 text-xs bg-white/60 dark:bg-neutral-950/60 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium truncate" }, b.titulo), /* @__PURE__ */ React.createElement(
+  }))), choques.length > 0 && !oculto("choques") && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-red-400 dark:border-red-800 bg-red-50 dark:bg-red-950/25 p-3.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(AlertCircle, { size: 16, className: "text-red-600 dark:text-red-400 shrink-0" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-red-700 dark:text-red-300" }, "\u26A0 Se est\xE1n pisando ", choques.length, " ", choques.length === 1 ? "par de actividades" : "pares de actividades", " el ", selDayFull.toLowerCase()), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "choques", color: "text-red-500 hover:bg-red-200/60 dark:hover:bg-red-900/40" })), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, choques.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "text-xs bg-white/70 dark:bg-neutral-950/60 rounded-md px-2 py-1.5 flex items-baseline gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.a.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.a.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.a.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400 font-medium" }, "se pisa con"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.b.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.b.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400" }, "\xB7 ", durLabel(c.min), " en com\xFAn")))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-600 dark:text-neutral-400" }, /* @__PURE__ */ React.createElement("b", null, "Las dos quedaron como las guardaste"), ": no se movi\xF3 ni se acort\xF3 ninguna. Si una tiene que correrse, abrila con el lapicito y cambiale la hora vos.")), (() => {
+    const { editadas, propias, ocultos, hay } = capasDatos;
+    if (!hay || oculto("capas")) return null;
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-300/50 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/15 p-3 space-y-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Layers, { size: 14, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-amber-700 dark:text-amber-300" }, "Capas \u2014 qu\xE9 se guard\xF3 encima de tu rutina el ", selDayFull.toLowerCase()), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "capas", color: "text-amber-600 hover:bg-amber-200/60 dark:hover:bg-amber-900/40" })), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 -mt-1" }, "No habla de horarios cruzados: son cambios guardados sobre la estructura base."), editadas.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 mb-1" }, /* @__PURE__ */ React.createElement("strong", null, editadas.length), ' edici\xF3n(es) permanente(s) sobre la rutina. Una concreci\xF3n hecha en Semana NO deber\xEDa llegar ac\xE1: si reconoc\xE9s alguna de estas como "lo que iba a hacer esa semana", deshacela.'), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, editadas.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.id, className: "flex items-center gap-2 text-xs bg-white/60 dark:bg-neutral-950/60 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium truncate" }, b.titulo), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => quitarOverrideRutina && quitarOverrideRutina(sel, b.id),
@@ -5408,7 +5451,14 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
       },
       "Reponerlas"
     )));
-  })(), obsoletos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border p-3 text-xs", style: { borderColor: `${COLOR_OBSOLETO}66`, background: `${COLOR_OBSOLETO}10` } }, /* @__PURE__ */ React.createElement("span", { className: "font-medium", style: { color: COLOR_OBSOLETO } }, "\u26A0 ", obsoletos.length, " ", obsoletos.length === 1 ? "actividad usa un \xE1rea" : "actividades usan \xE1reas", " que ya no existe", obsoletos.length === 1 ? "" : "n", ":"), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, areasObsoletas.join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-400 mt-1" }, "Vienen del Sheets o de la rutina vieja. Abrilas con el lapicito y asignales un \xE1rea actual \u2014 hasta entonces se muestran en gris ac\xE1 y en Semana.")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-2" }, agenda.map((b) => {
+  })(), obsoletos.length > 0 && !oculto("obsoletos") && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border p-3 text-xs", style: { borderColor: `${COLOR_OBSOLETO}66`, background: `${COLOR_OBSOLETO}10` } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium", style: { color: COLOR_OBSOLETO } }, "\u26A0 ", obsoletos.length, " ", obsoletos.length === 1 ? "actividad usa un \xE1rea" : "actividades usan \xE1reas", " que ya no existe", obsoletos.length === 1 ? "" : "n", ":"), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, areasObsoletas.join(" \xB7 "))), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "obsoletos", color: "text-neutral-400 hover:bg-neutral-200/60 dark:hover:bg-neutral-800" })), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-400 mt-1" }, "Vienen del Sheets o de la rutina vieja. Abrilas con el lapicito y asignales un \xE1rea actual \u2014 hasta entonces se muestran en gris ac\xE1 y en Semana.")), descartadosAca.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 flex items-center gap-2 flex-wrap px-1" }, /* @__PURE__ */ React.createElement("span", null, descartadosAca.length, " aviso(s) descartado(s) en ", selDayFull.toLowerCase(), ":", " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, descartadosAca.map((t) => AVISOS[t].titulo).join(" \xB7 "))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => restaurarAvisos && restaurarAvisos(sel),
+      className: "px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+    },
+    "Mostrarlos"
+  )), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-2" }, agenda.map((b) => {
     const muerta = areaObsoleta(b.area);
     const color = colorDeBloque(b.area);
     if (editandoId === b.id) {
@@ -7175,7 +7225,9 @@ const AYUDA = {
       ["Hora / duraci\xF3n por defecto", "se aplican a todos los d\xEDas marcados; despu\xE9s ajust\xE1s d\xEDa por d\xEDa abajo."],
       ["Deshacer edici\xF3n", "devuelve un bloque a lo que dice el Sheets."],
       ["Mover a la semana", "saca una actividad de la rutina y la deja como cosa de esta semana."],
-      ["Reponerlas", "vuelve a mostrar las actividades de la rutina que hab\xEDas ocultado."]
+      ["Reponerlas", "vuelve a mostrar las actividades de la rutina que hab\xEDas ocultado."],
+      ["\xD7 en un aviso", "lo descarta. Si m\xE1s adelante aparece algo distinto de ese tipo, el aviso vuelve solo."],
+      ["Mostrarlos", "trae de nuevo los avisos que descartaste en ese d\xEDa."]
     ],
     reglas: [
       "Si dos actividades se pisan en el reloj, la app NO mueve ni acorta ninguna: te lo avisa con \u26A0 en la pesta\xF1a del d\xEDa y con la alarma roja arriba. Cu\xE1l se corre lo decid\xEDs vos con el lapicito.",
@@ -7305,6 +7357,7 @@ function App() {
   const [asignaciones, setAsignaciones] = useState({});
   const [manuales, setManuales] = useState([]);
   const [bloquesHechos, setBloquesHechos] = useState({});
+  const [avisosDescartados, setAvisosDescartados] = useState({});
   const [rutinaGeneral, setRutinaGeneral] = useState([]);
   const [recurrentes, setRecurrentes] = useState(() => usaPlantilla() ? RECURRENTES_DEFAULT : []);
   const [eventos, setEventos] = useState([]);
@@ -7473,6 +7526,7 @@ function App() {
       setRecurrentes(RECURRENTES);
       setEventos(EVENTOS);
       setBloquesHechos(await loadState("martin:bloques_hechos", {}));
+      setAvisosDescartados(await loadState("martin:avisos_descartados", {}));
       let c = await loadState("martin:checklists", {});
       const f = await loadState("martin:feedback", {});
       const ls = await loadState("martin:lastSync", null);
@@ -7778,6 +7832,29 @@ function App() {
       saveState("martin:rutina_overrides", RUTINA_OVERRIDES);
     }
     setRutinaTick((t) => t + 1);
+  }
+  function descartarAviso(dia, tipo, firma) {
+    setAvisosDescartados((prev) => {
+      const next = { ...prev, [dia + "::" + tipo]: firma };
+      saveState("martin:avisos_descartados", next);
+      return next;
+    });
+  }
+  function restaurarAvisos(dia) {
+    setAvisosDescartados((prev) => {
+      const next = {};
+      let n = 0;
+      Object.keys(prev).forEach((k) => {
+        if (String(k).indexOf(dia + "::") === 0) {
+          n++;
+          return;
+        }
+        next[k] = prev[k];
+      });
+      if (!n) return prev;
+      saveState("martin:avisos_descartados", next);
+      return next;
+    });
   }
   function bloqueHechoKey(dayKey, id) {
     return weekKeyOf(now) + "::" + dayKey + "::" + id;
@@ -8220,7 +8297,10 @@ function App() {
       quitarOverrideRutina,
       moverBloqueASemana,
       contarOcultosRutina,
-      reponerOcultosRutina
+      reponerOcultosRutina,
+      avisosDescartados,
+      descartarAviso,
+      restaurarAvisos
     }
   ), tab === "objetivos" && /* @__PURE__ */ React.createElement(
     ObjetivosSemanales,
