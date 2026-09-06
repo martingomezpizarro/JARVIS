@@ -198,7 +198,16 @@
        y al alejar con zoom el contenido queda chico y pegado a la izquierda,
        con una banda vacía al costado. Con esto el lienzo nunca supera la
        pantalla: el contenido se adapta al ancho visible, con o sin zoom. */
-    html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+    /* OJO con este overflow: `hidden` convierte a html/body en contenedor de
+       scroll, y eso ROMPE el `position: sticky` de la barra lateral — el aside
+       se iba con el scroll y quedaba media pantalla vacía. `clip` corta el
+       desborde horizontal exactamente igual pero NO crea contenedor de scroll,
+       así que la lateral se queda quieta. El @supports deja el comportamiento
+       viejo en navegadores que no conocen `clip`. */
+    html, body { width: 100%; max-width: 100%; overflow-x: clip; }
+    @supports not (overflow-x: clip) {
+      html, body { overflow-x: hidden; }
+    }
     #root { min-width: 0; max-width: 100%; }
     #root img, #root svg, #root table { max-width: 100%; }
 
