@@ -1834,6 +1834,24 @@ function getInicioDeSemana(date) {
   return d;
 }
 const getMondayOfWeek = getInicioDeSemana;
+const HORA_CORTE_SEMANAL = 13;
+function ultimoCorteSemanal(ahora) {
+  const n = ahora ? new Date(ahora) : /* @__PURE__ */ new Date();
+  const c = new Date(n);
+  c.setDate(c.getDate() - c.getDay());
+  c.setHours(HORA_CORTE_SEMANAL, 0, 0, 0);
+  if (c > n) c.setDate(c.getDate() - 7);
+  return c;
+}
+function semanaVencida(semKey, ahora) {
+  if (!semKey) return false;
+  const p = String(semKey).split("-").map(Number);
+  if (p.length !== 3 || !p[0]) return false;
+  const vence = new Date(p[0], p[1] - 1, p[2]);
+  vence.setDate(vence.getDate() + 7);
+  vence.setHours(HORA_CORTE_SEMANAL, 0, 0, 0);
+  return (ahora ? new Date(ahora) : /* @__PURE__ */ new Date()) >= vence;
+}
 function inicioSemanaLunes(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -1878,6 +1896,9 @@ function bloqueCustomDe(dayKey, blockId) {
 function bloqueEsDeSemana(dayKey, blockId) {
   const b = bloqueCustomDe(dayKey, blockId);
   return !!(b && b.origen === "semana");
+}
+function acopleVigente(o) {
+  return !!(o && o.acople && o.acople.bloqueId && o.acople.dia && o.acople.dia === o.dia);
 }
 function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
   const items = [];
@@ -1938,7 +1959,7 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
       });
     });
   }
-  objetivos.filter((o) => o.dia === dayKey && o.hora && !o.completado).forEach((o) => {
+  objetivos.filter((o) => o.dia === dayKey && o.hora && !o.completado && !acopleVigente(o)).forEach((o) => {
     items.push({
       id: `obj-${o.id}`,
       hora: o.hora,
@@ -2095,6 +2116,35 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
     finales.length = 0;
     Array.prototype.push.apply(finales, conSemana);
   }
+  const acoplados = (objetivos || []).filter((o) => acopleVigente(o) && o.dia === dayKey && !o.completado);
+  if (acoplados.length) {
+    const porBloque = {};
+    acoplados.forEach((o) => {
+      const k = idBase(o.acople.bloqueId);
+      (porBloque[k] = porBloque[k] || []).push(o);
+    });
+    finales.forEach((it, i) => {
+      const lista = porBloque[idBase(it.id)];
+      if (!lista || !lista.length) return;
+      const nombres = lista.map((o) => o.tarea || o.subseccion || o.seccion || "Objetivo");
+      finales[i] = {
+        ...it,
+        titulo: nombres.join(" \xB7 "),
+        // La sección NO se toca: el bloque sigue siendo el de la rutina.
+        subarea: it.subarea || it.seccion || it.titulo,
+        acopladoDe: it.titulo,
+        objetivosAcoplados: lista.map((o) => ({ id: o.id, titulo: o.tarea || o.subseccion || o.seccion, prioridad: o.prioridad })),
+        subtareas: (it.subtareas || []).concat(
+          lista.flatMap((o) => (o.subtareas || []).map((st, k) => ({
+            id: st.id || `acs-${o.id}-${k}`,
+            titulo: st.titulo,
+            hecha: !!st.hecha,
+            deObjetivo: o.id
+          })))
+        )
+      };
+    });
+  }
   finales.sort((a, b) => timeToMinutes(a.hora) - timeToMinutes(b.hora));
   const prioritarios = finales.filter((it) => it.prioritario);
   if (prioritarios.length === 0) return finales;
@@ -2116,6 +2166,26 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
 function idBase(id) {
   return String(id == null ? "" : id).replace(/__c\d+$/, "");
 }
+function podarSemanaVencida(ahora) {
+  let ovr = 0, propias = 0;
+  Object.keys(SEMANA_OVERRIDES || {}).forEach((k) => {
+    if (semanaVencida(String(k).slice(0, 10), ahora)) {
+      delete SEMANA_OVERRIDES[k];
+      ovr++;
+    }
+  });
+  Object.keys(BLOQUES_CUSTOM || {}).forEach((d) => {
+    const antes = (BLOQUES_CUSTOM[d] || []).length;
+    BLOQUES_CUSTOM[d] = (BLOQUES_CUSTOM[d] || []).filter(
+      (b) => !(b && b.origen === "semana" && b.semana && semanaVencida(b.semana, ahora))
+    );
+    propias += antes - BLOQUES_CUSTOM[d].length;
+  });
+  if (ovr) saveState("martin:semana_overrides", SEMANA_OVERRIDES);
+  if (propias) saveState("martin:bloques_custom", BLOQUES_CUSTOM);
+  if (ovr || propias) console.log(`[Jarvis] corte semanal: se limpiaron ${ovr} concreci\xF3n(es) y ${propias} actividad(es) de semanas cumplidas`);
+  return ovr + propias;
+}
 function choquesDeAgenda(agenda) {
   const orden = (agenda || []).slice().sort((x, y) => timeToMinutes(x.hora) - timeToMinutes(y.hora));
   const out = [];
@@ -2129,6 +2199,43 @@ function choquesDeAgenda(agenda) {
       if (aIni < bFin && aFin > bIni) out.push({ a, b, min: Math.min(aFin, bFin) - Math.max(aIni, bIni) });
     }
   }
+  return out;
+}
+function normTexto(x) {
+  return String(x == null ? "" : x).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+function nivelCoincidencia(bloque, obj) {
+  if (normTexto(itemArea(bloque)) !== normTexto(obj.categoria)) return 0;
+  const campos = [bloque.subseccion, bloque.seccion, bloque.subarea, bloque.titulo].map(normTexto).filter(Boolean);
+  const sub = normTexto(obj.subseccion);
+  const sec = normTexto(obj.seccion);
+  if (sub && campos.includes(sub)) return 3;
+  if (sec && campos.includes(sec)) return 2;
+  return 1;
+}
+const ETIQUETA_COINCIDENCIA = { 3: "tu subsecci\xF3n", 2: "tu secci\xF3n", 1: "tu \xE1rea" };
+function franjasParaObjetivo(obj) {
+  if (!obj || !obj.categoria) return [];
+  const out = [];
+  DIAS.forEach((d) => {
+    buildDayAgenda(d.key, []).forEach((b) => {
+      if (b.tipo === "objetivo" || b.tipo === "evento") return;
+      const nivel = nivelCoincidencia(b, obj);
+      if (!nivel) return;
+      out.push({
+        dia: d.key,
+        diaFull: d.full,
+        bloqueId: b.id,
+        hora: b.hora,
+        duracion: b.duracion || 30,
+        titulo: b.titulo,
+        subarea: b.subarea || b.seccion || b.titulo,
+        area: itemArea(b),
+        nivel
+      });
+    });
+  });
+  out.sort((a, b) => b.nivel - a.nivel || DIAS.findIndex((d) => d.key === a.dia) - DIAS.findIndex((d) => d.key === b.dia) || timeToMinutes(a.hora) - timeToMinutes(b.hora));
   return out;
 }
 const AVISOS = {
@@ -2333,7 +2440,7 @@ function AssignPopover({ objetivo, onAsignar, onClose }) {
     ))
   ));
 }
-function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: objetivosVistaProp, setObjetivos, onToggleRecurrente, checklists, setChecklists, weekDates, rutinaTick, asignarObjetivo, onEditarBloque, onAgregarBloque, esBloqueHecho, toggleBloqueHecho, taxonomia }) {
+function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: objetivosVistaProp, setObjetivos, onToggleRecurrente, checklists, setChecklists, weekDates, rutinaTick, asignarObjetivo, onEditarBloque, onAgregarBloque, esBloqueHecho, toggleBloqueHecho, taxonomia, cosasDeLaSemana, onDeshacerSemana }) {
   const vista = useMemo(
     () => objetivosVigentes(objetivosVistaProp || objetivos, taxonomia),
     [objetivosVistaProp, objetivos, taxonomia]
@@ -2416,7 +2523,23 @@ function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: ob
       /* @__PURE__ */ React.createElement("span", { className: "text-lg font-medium leading-tight" }, date.getDate()),
       isToday && !isSelected && /* @__PURE__ */ React.createElement("span", { className: "text-[9px]" }, "hoy")
     );
-  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl font-medium" }, DIAS[dayIdx].full, " ", dateObj.getDate(), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 text-lg ml-2" }, "de ", dateObj.toLocaleDateString("es-AR", { month: "long" }))), esHoy && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-amber-600 dark:text-amber-400 mt-1" }, "Ahora: ", now.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "Bloques:"), " ", /* @__PURE__ */ React.createElement("strong", null, agenda.length)), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "Urgentes:"), " ", /* @__PURE__ */ React.createElement("strong", { className: "text-red-600" }, urgentesSinHorario.length)))), urgentesSinHorario.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-red-200 dark:border-red-900/40 bg-red-50/60 dark:bg-red-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-3" }, /* @__PURE__ */ React.createElement(Flame, { size: 16, className: "text-red-600 dark:text-red-400" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm text-red-900 dark:text-red-200" }, "Urgentes sin horario fijo"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-red-600 dark:text-red-400" }, "\u2014 tach\xE1 cuando los hagas")), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, urgentesSinHorario.map((o) => /* @__PURE__ */ React.createElement(
+  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl font-medium" }, DIAS[dayIdx].full, " ", dateObj.getDate(), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 text-lg ml-2" }, "de ", dateObj.toLocaleDateString("es-AR", { month: "long" }))), esHoy && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-amber-600 dark:text-amber-400 mt-1" }, "Ahora: ", now.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "Bloques:"), " ", /* @__PURE__ */ React.createElement("strong", null, agenda.length)), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "Urgentes:"), " ", /* @__PURE__ */ React.createElement("strong", { className: "text-red-600" }, urgentesSinHorario.length)))), (() => {
+    const ocultas = (cosasDeLaSemana ? cosasDeLaSemana() : []).filter((c) => c.oculto && c.dia === selectedDay);
+    if (!ocultas.length || !onDeshacerSemana) return null;
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-sky-300/60 dark:border-sky-900/60 bg-sky-50/50 dark:bg-sky-950/15 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-sky-700 dark:text-sky-300 font-medium" }, ocultas.length, " actividad(es) que ocultaste esta semana:"), ocultas.map((c) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: c.bloqueId,
+        onClick: () => onDeshacerSemana(c.dia, c.bloqueId),
+        title: "Volver a mostrarla",
+        className: "px-2 py-0.5 rounded border border-sky-400/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100/60 dark:hover:bg-sky-900/30"
+      },
+      c.hora,
+      " ",
+      c.original || "\u2014",
+      " \xB7 Reponer"
+    )));
+  })(), urgentesSinHorario.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-red-200 dark:border-red-900/40 bg-red-50/60 dark:bg-red-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-3" }, /* @__PURE__ */ React.createElement(Flame, { size: 16, className: "text-red-600 dark:text-red-400" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm text-red-900 dark:text-red-200" }, "Urgentes sin horario fijo"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-red-600 dark:text-red-400" }, "\u2014 tach\xE1 cuando los hagas")), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, urgentesSinHorario.map((o) => /* @__PURE__ */ React.createElement(
     "div",
     {
       key: o.id,
@@ -2962,7 +3085,7 @@ function usePuntero() {
 }
 const SLOT_MIN = 5;
 const SLOT_PX = 5;
-function VistaSemanal({ objetivos: objetivosProp, now, weekDates, setSelectedDay, setTab, rutinaTick, onEditarBloque, onAgregarBloque, onVolverARutina, asignarObjetivo, setObjetivos, taxonomia, onReiniciarSemana, cuentaSemana }) {
+function VistaSemanal({ objetivos: objetivosProp, now, weekDates, setSelectedDay, setTab, rutinaTick, onEditarBloque, onAgregarBloque, onVolverARutina, asignarObjetivo, setObjetivos, taxonomia, onReiniciarSemana, cuentaSemana, cosasDeLaSemana, onDeshacerSemana }) {
   var _a;
   const objetivos = useMemo(() => objetivosVigentes(objetivosProp, taxonomia), [objetivosProp, taxonomia]);
   const currentDay = currentDayKey(now);
@@ -3121,7 +3244,20 @@ NO se toca: la Rutina ni los Objetivos semanales.
     /* @__PURE__ */ React.createElement(Pencil, { size: 12 }),
     " ",
     editMode ? "Listo" : "Editar semana"
-  ))), editando && /* @__PURE__ */ React.createElement(
+  ))), (() => {
+    const cosas = cosasDeLaSemana ? cosasDeLaSemana() : [];
+    if (!cosas.length || !onDeshacerSemana) return null;
+    const ocultas = cosas.filter((c) => c.oculto).length;
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-sky-300/60 dark:border-sky-900/60 bg-sky-50/50 dark:bg-sky-950/15 p-3 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-sky-700 dark:text-sky-300" }, "Esta semana, encima de tu rutina \u2014 ", cosas.length, " cambio(s)", ocultas > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 font-normal" }, " \xB7 ", ocultas, " sin mostrarse en la grilla")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-1" }, cosas.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.dia + "::" + c.bloqueId, className: "flex items-center gap-2 text-xs bg-white/70 dark:bg-neutral-950/60 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 shrink-0 w-16" }, c.diaFull.slice(0, 3), " ", c.hora), c.oculto ? /* @__PURE__ */ React.createElement("span", { className: "truncate" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "oculta:"), " ", c.original || "\u2014") : /* @__PURE__ */ React.createElement("span", { className: "truncate" }, c.titulo, c.original && c.original !== c.titulo && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " (era ", c.original, ")")), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => onDeshacerSemana(c.dia, c.bloqueId),
+        title: c.oculto ? "Vuelve a mostrarla esta semana" : "Descarta lo concretado y vuelve al nombre de la rutina",
+        className: "ml-auto shrink-0 text-[11px] px-2 py-0.5 rounded border border-sky-400/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100/60 dark:hover:bg-sky-900/30"
+      },
+      c.oculto ? "Reponer" : "Volver a la rutina"
+    )))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500" }, "Se borra solo el domingo a las 13:00, cuando rearm\xE1s la semana. La rutina no se toca."));
+  })(), editando && /* @__PURE__ */ React.createElement(
     BloqueEditForm,
     {
       inicial: editando.bloque,
@@ -3288,7 +3424,8 @@ NO se toca: la Rutina ni los Objetivos semanales.
             },
             title: (editMode ? `Editar: ${titulo} \u2014 arrastr\xE1 el borde inferior para cambiar la duraci\xF3n` : `${[bloque.subarea, bloque.titulo].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" \u203A ")} \xB7 ${bloque.hora} \xB7 ${bloque.duracion} min \xB7 ${bloque.area}`) + (esObjetivo ? `
 \u2605 Objetivo semanal \u2014 tiene prioridad sobre la rutina.` : bloque.tipo === "custom" ? `
-Actividad propia de la semana \u2014 pisa la rutina sin borrarla.` : "") + ((bloque.pisadoPor || []).length ? `
+Actividad propia de la semana \u2014 pisa la rutina sin borrarla.` : "") + ((bloque.objetivosAcoplados || []).length ? `
+\u25C6 Es tu franja de "${bloque.acopladoDe}": esta semana la us\xE1s para ${bloque.objetivosAcoplados.map((o) => o.titulo).join(" y ")}.` : "") + ((bloque.pisadoPor || []).length ? `
 \u26A0 Se pisa en el horario con: ${bloque.pisadoPor.join(", ")} \u2014 nadie se movi\xF3, decid\xED vos cu\xE1l corr\xE9s.` : "") + ((bloque.pisaA || []).length ? `
 \u26A0 Se pisa en el horario con: ${bloque.pisaA.join(", ")} \u2014 nadie se movi\xF3, decid\xED vos cu\xE1l corr\xE9s.` : "") + (muerta ? `
 \u26A0 El \xE1rea "${bloque.area}" ya no existe en tu taxonom\xEDa \u2014 reclasificala desde Rutina.` : "") + (bloque.recortado ? `
@@ -3314,6 +3451,7 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
             },
             muerta && /* @__PURE__ */ React.createElement("span", { title: `\xC1rea obsoleta: ${bloque.area}` }, "\u26A0 "),
             esObjetivo && /* @__PURE__ */ React.createElement("span", { title: "Objetivo semanal \u2014 manda sobre la rutina" }, "\u2605 "),
+            (bloque.objetivosAcoplados || []).length > 0 && /* @__PURE__ */ React.createElement("span", { title: `Objetivo semanal en tu franja de "${bloque.acopladoDe}" \u2014 la rutina no se movi\xF3` }, "\u25C6 "),
             titulo
           ), contexto && rowSpan >= 5 && /* @__PURE__ */ React.createElement(
             "div",
@@ -4140,6 +4278,7 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
   const [dia, setDia] = useState((inicial == null ? void 0 : inicial.dia) || "");
   const [hora, setHora] = useState((inicial == null ? void 0 : inicial.hora) || "");
   const [duracion, setDuracion] = useState((inicial == null ? void 0 : inicial.duracion) || 60);
+  const [acople, setAcople] = useState((inicial == null ? void 0 : inicial.acople) || null);
   const [prioridad, setPrioridad] = useState((inicial == null ? void 0 : inicial.prioridad) || "semanal");
   const [recurrencia, setRecurrencia] = useState((inicial == null ? void 0 : inicial.recurrencia) || "una_vez");
   const [fechaMes, setFechaMes] = useState((inicial == null ? void 0 : inicial.fecha_mes) || "");
@@ -4149,6 +4288,24 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
   const ofTaxArea = (taxonomia || []).find((t) => t.area === categoria);
   const seccionesExistentes = Array.from(/* @__PURE__ */ new Set([...((ofTaxArea == null ? void 0 : ofTaxArea.secciones) || []).map((x) => x.nombre).filter(Boolean), ...seccion ? [seccion] : []]));
   const subseccionesExistentes = Array.from(/* @__PURE__ */ new Set([...(((_a = ((ofTaxArea == null ? void 0 : ofTaxArea.secciones) || []).find((x) => x.nombre === seccion)) == null ? void 0 : _a.subsecciones) || []).filter(Boolean), ...subseccion ? [subseccion] : []]));
+  const franjas = useMemo(
+    () => franjasParaObjetivo({ categoria, seccion, subseccion }),
+    [categoria, seccion, subseccion]
+  );
+  const [verTodasFranjas, setVerTodasFranjas] = useState(false);
+  const franjasFuertes = franjas.filter((f) => f.nivel >= 2);
+  const franjasVisibles = verTodasFranjas ? franjas : franjasFuertes.length ? franjasFuertes : franjas.slice(0, 6);
+  const durTxt = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}'` : ""}` : `${m}'`;
+  const elegirFranja = (f) => {
+    if (acople && acople.bloqueId === f.bloqueId && acople.dia === f.dia) {
+      setAcople(null);
+      return;
+    }
+    setDia(f.dia);
+    setHora(f.hora);
+    setDuracion(f.duracion);
+    setAcople({ dia: f.dia, bloqueId: f.bloqueId, titulo: f.titulo });
+  };
   function handleGuardar() {
     if (!tarea && !subseccion) {
       alert("Ingres\xE1 al menos una tarea o subsecci\xF3n");
@@ -4181,6 +4338,7 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       dia: dia || null,
       hora: hora || null,
       duracion: hora ? Math.max(5, Number(duracion) || 60) : null,
+      acople: acople && acople.dia === dia ? acople : null,
       prioridad,
       recurrencia,
       fecha_mes: recurrencia === "mensual" ? fechaMes : null,
@@ -4237,11 +4395,44 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       placeholder: "Armar el \xEDndice\nJuntar la bibliograf\xEDa\nMandarlo a revisi\xF3n",
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm resize-y font-mono"
     }
-  )), /* @__PURE__ */ React.createElement("div", { className: "jarvis-form-3 grid grid-cols-3 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "5. D\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(opcional)")), /* @__PURE__ */ React.createElement(
+  )), franjas.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-amber-200 dark:border-amber-900/60 bg-white/60 dark:bg-neutral-950/40 p-2.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400" }, "Tu rutina ya le dedica horas a esto", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, " \u2014 eleg\xED una y el objetivo se mete ah\xED")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, franjasVisibles.map((f) => {
+    const sel = !!(acople && acople.bloqueId === f.bloqueId && acople.dia === f.dia);
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: f.dia + f.bloqueId,
+        type: "button",
+        onClick: () => elegirFranja(f),
+        title: `${f.diaFull} ${f.hora} \xB7 ${durTxt(f.duracion)} \xB7 ${f.subarea}
+Coincide con ${ETIQUETA_COINCIDENCIA[f.nivel]}.${sel ? "\n\nClick de nuevo para soltarla." : ""}`,
+        className: `text-left px-2.5 py-1.5 rounded-lg border text-xs transition-all ${sel ? "bg-amber-500 text-neutral-950 border-amber-500 font-medium" : f.nivel === 3 ? "border-amber-300 dark:border-amber-800 hover:bg-amber-100/60 dark:hover:bg-amber-900/25" : "border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-900"}`
+      },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, f.diaFull.slice(0, 3)),
+      " ",
+      /* @__PURE__ */ React.createElement("span", { className: "font-mono" }, f.hora),
+      " ",
+      /* @__PURE__ */ React.createElement("span", { className: sel ? "opacity-70" : "text-neutral-400" }, durTxt(f.duracion)),
+      /* @__PURE__ */ React.createElement("span", { className: `block text-[10px] truncate max-w-[13rem] ${sel ? "opacity-80" : "text-neutral-400"}` }, f.titulo)
+    );
+  })), franjas.length > franjasVisibles.length && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setVerTodasFranjas(true),
+      className: "text-[11px] text-neutral-500 underline underline-offset-2 hover:text-amber-600"
+    },
+    "Ver las otras ",
+    franjas.length - franjasVisibles.length,
+    " franjas de ",
+    categoria
+  ), acople ? /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-amber-700 dark:text-amber-300" }, "Se acopla a esa franja: en ", /* @__PURE__ */ React.createElement("strong", null, "Semana"), " vas a ver tu bloque de siempre (", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, acople.titulo), ") con el nombre de este objetivo. No se pisa ni se corre nada. ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "Click de nuevo en la franja para soltarla.")) : /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500" }, "Si no eleg\xEDs ninguna y pon\xE9s d\xEDa y hora a mano, el objetivo ocupa su propia franja.")), /* @__PURE__ */ React.createElement("div", { className: "jarvis-form-3 grid grid-cols-3 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "5. D\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(opcional)")), /* @__PURE__ */ React.createElement(
     "select",
     {
       value: dia,
-      onChange: (e) => setDia(e.target.value),
+      onChange: (e) => {
+        setDia(e.target.value);
+        setAcople(null);
+      },
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     },
     /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin d\xEDa fijo"),
@@ -4251,7 +4442,10 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
     {
       type: "time",
       value: hora,
-      onChange: (e) => setHora(e.target.value),
+      onChange: (e) => {
+        setHora(e.target.value);
+        setAcople(null);
+      },
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     }
   )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "7. Duraci\xF3n ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(min)")), /* @__PURE__ */ React.createElement(
@@ -4263,7 +4457,7 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     },
     [15, 30, 45, 60, 90, 120, 150, 180, 240].map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}'` : ""}` : `${m}'`))
-  ))), hora && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 -mt-1.5" }, "Con d\xEDa + hora, este objetivo ", /* @__PURE__ */ React.createElement("strong", null, "manda sobre la rutina"), ": en \u201CSemana\u201D ocupa su franja y la rutina le cede el lugar."), /* @__PURE__ */ React.createElement(
+  ))), hora && !acople && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 -mt-1.5" }, "Con d\xEDa + hora a mano, este objetivo ocupa ", /* @__PURE__ */ React.createElement("strong", null, "su propia franja"), ". Si cae encima de algo de tu rutina, las dos quedan como est\xE1n y Rutina te avisa del cruce."), /* @__PURE__ */ React.createElement(
     CampoAviso,
     {
       avisar,
@@ -7239,6 +7433,7 @@ const AYUDA = {
     que: "Los objetivos concretos de esta semana, con prioridad, secci\xF3n y \u2014si quer\xE9s\u2014 d\xEDa y hora.",
     botones: [
       ["Calendario con +", "asigna d\xEDa y hora al objetivo. Si cae encima de un bloque de rutina, los dos quedan como est\xE1n y Rutina te avisa del cruce."],
+      ["Tu rutina ya le dedica horas a esto", "las franjas de tu rutina que coinciden con la clasificaci\xF3n del objetivo. Eleg\xED una y el objetivo se mete AH\xCD: en Semana ves tu bloque de siempre con el nombre del objetivo (\u25C6), sin pisar ni correr nada. Click de nuevo para soltarla."],
       ["Hoja de papel", "abre el objetivo completo: categor\xEDa, secci\xF3n, subtareas, prioridad."],
       ["Archivo", "guarda los completados fuera de la lista sin perderlos."],
       ["C\xEDrculo", "lo da por cumplido; si est\xE1 atado a un objetivo de largo plazo, le avanza el hito."]
@@ -7469,15 +7664,8 @@ function App() {
         });
         if (migradas > 0) saveState("martin:bloques_custom", BLOQUES_CUSTOM);
       }
-      const semGuardadas = await loadState("martin:semana_overrides", {});
-      const semActual = semanaKeyDe(/* @__PURE__ */ new Date());
-      SEMANA_OVERRIDES = {};
-      let podadas = 0;
-      Object.keys(semGuardadas).forEach((k) => {
-        if (String(k).slice(0, 10) >= semActual) SEMANA_OVERRIDES[k] = semGuardadas[k];
-        else podadas++;
-      });
-      if (podadas > 0) saveState("martin:semana_overrides", SEMANA_OVERRIDES);
+      SEMANA_OVERRIDES = await loadState("martin:semana_overrides", {});
+      podarSemanaVencida(/* @__PURE__ */ new Date());
       RUTINA_GENERAL = await loadState("martin:rutina_general", []);
       {
         const evGuardados = await loadState("martin:eventos", []);
@@ -7638,6 +7826,35 @@ function App() {
     SEMANA_OVERRIDES[key] = { ...SEMANA_OVERRIDES[key] || {}, ...cambios };
     saveState("martin:semana_overrides", SEMANA_OVERRIDES);
     setRutinaTick((t) => t + 1);
+  }
+  function cosasDeLaSemana() {
+    const sem = semanaKeyDe(/* @__PURE__ */ new Date());
+    const porDia = {};
+    Object.keys(SEMANA_OVERRIDES || {}).forEach((k) => {
+      const partes = String(k).split("::");
+      if (partes.length < 3 || partes[0] !== sem) return;
+      const dia = partes[1], bloqueId = partes.slice(2).join("::");
+      const ov = SEMANA_OVERRIDES[k] || {};
+      (porDia[dia] = porDia[dia] || []).push({ dia, bloqueId, ov });
+    });
+    const out = [];
+    Object.keys(porDia).forEach((dia) => {
+      const base = buildDayAgenda(dia, []);
+      porDia[dia].forEach(({ bloqueId, ov }) => {
+        const orig = base.find((b) => idBase(b.id) === idBase(bloqueId));
+        out.push({
+          dia,
+          diaFull: (DIAS.find((d) => d.key === dia) || {}).full || dia,
+          bloqueId,
+          oculto: !!ov.oculto,
+          titulo: ov.titulo || orig && orig.titulo || "\u2014",
+          original: orig && orig.titulo || null,
+          hora: orig && orig.hora || ov.hora || ""
+        });
+      });
+    });
+    out.sort((a, b) => DIAS.findIndex((d) => d.key === a.dia) - DIAS.findIndex((d) => d.key === b.dia) || String(a.hora).localeCompare(String(b.hora)));
+    return out;
   }
   function quitarEdicionSemana(dayKey, blockId) {
     const key = semanaKeyDe(/* @__PURE__ */ new Date()) + "::" + dayKey + "::" + blockId;
@@ -8091,6 +8308,9 @@ function App() {
     const id = setInterval(() => setNow(/* @__PURE__ */ new Date()), 6e4);
     return () => clearInterval(id);
   }, []);
+  useEffect(() => {
+    if (podarSemanaVencida(now) > 0) setRutinaTick((t) => t + 1);
+  }, [now]);
   const weekDates = getWeekDates(now);
   const urgentesCount = objetivos.filter((o) => o.prioridad === "urgente" && !o.completado).length;
   const semanalCount = objetivos.filter((o) => o.prioridad === "semanal" && !o.completado).length;
@@ -8241,7 +8461,9 @@ function App() {
       onEditarBloque: editarBloqueSemana,
       onAgregarBloque: agregarBloqueCustom,
       esBloqueHecho,
-      toggleBloqueHecho
+      toggleBloqueHecho,
+      cosasDeLaSemana,
+      onDeshacerSemana: quitarEdicionSemana
     }
   ), tab === "organizar" && /* @__PURE__ */ React.createElement(
     OrganizarSemana,
@@ -8278,7 +8500,9 @@ function App() {
       setObjetivos: setObjetivosPersist,
       taxonomia,
       onReiniciarSemana: reiniciarSemana,
-      cuentaSemana
+      cuentaSemana,
+      cosasDeLaSemana,
+      onDeshacerSemana: quitarEdicionSemana
     }
   ), tab === "rutina" && /* @__PURE__ */ React.createElement(
     RutinaBase,
