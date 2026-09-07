@@ -1279,7 +1279,10 @@
       // marca, o null si hoy no le toca.
       function momentoDe(m, hk, f, antGral) {
         if (!m || !m.hora) return null;
-        if (m.fecha) { if (m.fecha !== f) return null; }
+        // Una recurrente MENSUAL avisa el día N de CADA mes: no tiene fecha fija
+        // (como un evento) ni día de la semana (como la rutina).
+        if (m.diaMes) { if (new Date().getDate() !== +m.diaMes) return null; }
+        else if (m.fecha) { if (m.fecha !== f) return null; }
         else if (m.dia !== hk) return null;
         var ant = (m.ant === 0 || m.ant) ? +m.ant : antGral;
         return aMin(m.hora) - ant;
@@ -1338,7 +1341,7 @@
 
       var oyentes = [];
       window.JarvisNotif = {
-        version: "2026-08-31-b",
+        version: "2026-09-07-a",
         soportado: function () { return "Notification" in window; },
         permiso: function () { return ("Notification" in window) ? Notification.permission : "no-soportado"; },
         pedirPermiso: function () {
@@ -1405,7 +1408,7 @@
           }
           var d = new Date();
           return {
-            version: "2026-08-31-b",
+            version: "2026-09-07-a",
             permiso: ("Notification" in window) ? Notification.permission : "no-soportado",
             soportado: "Notification" in window,
             hayServiceWorker: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
@@ -2309,15 +2312,22 @@ function recurrentesComoObjetivos(recs, now) {
   const weekDates = getWeekDates(n);
   const out = [];
   (recs || []).forEach((r) => {
+    const per = r.frecuencia === "semanal" ? weekKeyOf(n) : monthKeyOf(n);
+    const hechas = r.subs_hechas && r.subs_hechas[per] || {};
     const base = {
       id: "rec-" + r.id,
       categoria: r.categoria,
       seccion: r.seccion || "Recurrente",
       subseccion: r.subseccion || "",
       tarea: r.tarea || r.titulo || "",
+      descripcion: r.descripcion || "",
+      subtareas: (r.subtareas || []).map((st, i) => {
+        const sid = st && st.id || "rs-" + i;
+        return { id: sid, titulo: st && st.titulo || String(st), hecha: !!hechas[sid] };
+      }),
       hora: r.hora || null,
       duracion: r.duracion || 30,
-      prioridad: "no-olvides",
+      prioridad: r.prioridad || "no-olvides",
       esRecurrente: true
     };
     if (r.frecuencia === "mensual" && r.dia_mes) {
@@ -2449,7 +2459,7 @@ function AssignPopover({ objetivo, onAsignar, onClose }) {
     ))
   ));
 }
-function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: objetivosVistaProp, setObjetivos, onToggleRecurrente, checklists, setChecklists, weekDates, rutinaTick, asignarObjetivo, onEditarBloque, onAgregarBloque, esBloqueHecho, toggleBloqueHecho, taxonomia, cosasDeLaSemana, onDeshacerSemana }) {
+function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: objetivosVistaProp, setObjetivos, onToggleRecurrente, onToggleSubRecurrente, checklists, setChecklists, weekDates, rutinaTick, asignarObjetivo, onEditarBloque, onAgregarBloque, esBloqueHecho, toggleBloqueHecho, taxonomia, cosasDeLaSemana, onDeshacerSemana }) {
   const vista = useMemo(
     () => objetivosVigentes(objetivosVistaProp || objetivos, taxonomia),
     [objetivosVistaProp, objetivos, taxonomia]
@@ -2496,12 +2506,17 @@ function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: ob
     return !!checklists[`${bloqueId}-${subId}`];
   }
   function subDeObjetivo(bloque, subId) {
-    const o = (objetivos || []).find((x) => String(x.id) === String(bloque.objetivoId));
+    const o = (vista || []).find((x) => String(x.id) === String(bloque.objetivoId)) || (objetivos || []).find((x) => String(x.id) === String(bloque.objetivoId));
     const st = (o && o.subtareas || []).find((x) => String(x.id) === String(subId));
     return !!(st && st.hecha);
   }
   function toggleSubDeObjetivo(bloque, subId) {
-    setObjetivos(objetivos.map((o) => String(o.id) === String(bloque.objetivoId) ? { ...o, subtareas: (o.subtareas || []).map((st) => String(st.id) === String(subId) ? { ...st, hecha: !st.hecha } : st) } : o));
+    const o = (vista || []).find((x) => String(x.id) === String(bloque.objetivoId));
+    if (o && o.esRecurrente) {
+      if (onToggleSubRecurrente) onToggleSubRecurrente(o.id, subId);
+      return;
+    }
+    setObjetivos(objetivos.map((o2) => String(o2.id) === String(bloque.objetivoId) ? { ...o2, subtareas: (o2.subtareas || []).map((st) => String(st.id) === String(subId) ? { ...st, hecha: !st.hecha } : st) } : o2));
   }
   const esObjetivoConId = (b) => b.tipo === "objetivo" && b.objetivoId != null;
   const bloqueIsChecked = (b, sid) => esObjetivoConId(b) ? subDeObjetivo(b, sid) : isChecked(b.id, sid);
@@ -2729,7 +2744,7 @@ function avisoDe(clave) {
 function aplicarAviso(clave, datos, aviso) {
   const N = window.JarvisNotif;
   if (!N || !clave) return;
-  const ok = aviso && aviso.avisar && datos && datos.hora && (datos.dia || datos.fecha);
+  const ok = aviso && aviso.avisar && datos && datos.hora && (datos.dia || datos.fecha || datos.diaMes);
   if (!ok) {
     N.desmarcar(clave);
     return;
@@ -2739,6 +2754,7 @@ function aplicarAviso(clave, datos, aviso) {
     hora: datos.hora,
     dia: datos.dia || null,
     fecha: datos.fecha || null,
+    diaMes: datos.diaMes || null,
     area: datos.area || "",
     duracion: datos.duracion || 30,
     ant: aviso.ant === 0 || aviso.ant ? +aviso.ant : null
@@ -3688,7 +3704,7 @@ ${punteroFino ? "Arrastr\xE1 a un d\xEDa o a una celda con horario" : "Toc\xE1 p
     );
   }), areasOcultas.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setAreasOcultas([]), className: "ml-1 px-1.5 py-0.5 rounded-md border border-amber-400/60 text-amber-600 dark:text-amber-400" }, "Mostrar todas (", areasOcultas.length, " ocultas)")));
 }
-function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, agregarObjetivoSemanal, taxonomia, lpObjetivos, marcarHitoLP, recurrentesSemana, onToggleRecurrente }) {
+function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, agregarObjetivoSemanal, taxonomia, lpObjetivos, marcarHitoLP, recurrentesSemana, onToggleRecurrente, onToggleSubRecurrente }) {
   const [mostrarForm, setMostrarForm] = useState(false);
   const [editando, setEditando] = useState(null);
   const [filtroCategoria, setFiltroCategoria] = useState(null);
@@ -3906,7 +3922,16 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
   function fila(o, color, area) {
     if (o.esRecurrente) {
       const dia = o.dia ? DIAS.find((d) => d.key === o.dia) : null;
-      return /* @__PURE__ */ React.createElement("div", { key: o.id, className: `group flex items-start gap-2.5 py-1 px-1.5 rounded hover:bg-neutral-50 dark:hover:bg-neutral-900 ${o.completado ? "opacity-60" : ""}` }, /* @__PURE__ */ React.createElement("button", { onClick: () => onToggleRecurrente && onToggleRecurrente(o.id), className: "mt-0.5 shrink-0", title: "Marcar como cumplida" }, o.completado ? /* @__PURE__ */ React.createElement(CircleCheck, { size: 16, className: "text-green-600" }) : /* @__PURE__ */ React.createElement(Circle, { size: 16, className: "text-neutral-300 dark:text-neutral-600 hover:text-neutral-500" })), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: `text-sm ${o.completado ? "line-through text-neutral-400" : "text-neutral-800 dark:text-neutral-200"}` }, itemTitulo(o)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap mt-0.5 text-[10px] text-neutral-400" }, /* @__PURE__ */ React.createElement("span", { className: "px-1.5 py-0.5 rounded-full inline-flex items-center gap-1", style: { background: `${color}18`, color } }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 9 }), " ", o.recurrencia === "mensual" ? "una vez al mes" : "una vez por semana"), dia && /* @__PURE__ */ React.createElement("span", null, dia.full), o.hora && /* @__PURE__ */ React.createElement("span", { className: "font-mono" }, o.hora))), /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("div", { key: o.id, className: `group flex items-start gap-2.5 py-1 px-1.5 rounded hover:bg-neutral-50 dark:hover:bg-neutral-900 ${o.completado ? "opacity-60" : ""}` }, /* @__PURE__ */ React.createElement("button", { onClick: () => onToggleRecurrente && onToggleRecurrente(o.id), className: "mt-0.5 shrink-0", title: "Marcar como cumplida" }, o.completado ? /* @__PURE__ */ React.createElement(CircleCheck, { size: 16, className: "text-green-600" }) : /* @__PURE__ */ React.createElement(Circle, { size: 16, className: "text-neutral-300 dark:text-neutral-600 hover:text-neutral-500" })), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: `text-sm ${o.completado ? "line-through text-neutral-400" : "text-neutral-800 dark:text-neutral-200"}` }, itemTitulo(o)), o.descripcion && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 italic mt-0.5" }, o.descripcion), (o.subtareas || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-1 space-y-0.5" }, o.subtareas.map((st) => /* @__PURE__ */ React.createElement("label", { key: st.id, className: "flex items-start gap-1.5 text-xs cursor-pointer" }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "checkbox",
+          checked: !!st.hecha,
+          onChange: () => onToggleSubRecurrente && onToggleSubRecurrente(o.id, st.id),
+          className: "mt-0.5 w-3 h-3",
+          style: { accentColor: color }
+        }
+      ), /* @__PURE__ */ React.createElement("span", { className: st.hecha ? "line-through text-neutral-400" : "text-neutral-600 dark:text-neutral-300" }, st.titulo)))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap mt-0.5 text-[10px] text-neutral-400" }, /* @__PURE__ */ React.createElement("span", { className: "px-1.5 py-0.5 rounded-full inline-flex items-center gap-1", style: { background: `${color}18`, color } }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 9 }), " ", o.recurrencia === "mensual" ? "una vez al mes" : "una vez por semana"), dia && /* @__PURE__ */ React.createElement("span", null, dia.full), o.hora && /* @__PURE__ */ React.createElement("span", { className: "font-mono" }, o.hora))), /* @__PURE__ */ React.createElement(
         "button",
         {
           onClick: () => setTab && setTab("organizar"),
@@ -4558,10 +4583,15 @@ function armarICSDeMarcas(marcas, anticipacion) {
   Object.keys(marcas || {}).forEach((clave) => {
     const m = marcas[clave];
     if (!m || !m.hora) return;
-    const puntual = !!m.fecha;
-    if (!puntual && (!m.dia || !BYDAY[m.dia])) return;
+    const mensual = !!m.diaMes;
+    const puntual = !mensual && !!m.fecha;
+    if (!mensual && !puntual && (!m.dia || !BYDAY[m.dia])) return;
     let base;
-    if (puntual) {
+    if (mensual) {
+      const hoy0 = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
+      base = new Date(ahora.getFullYear(), ahora.getMonth(), +m.diaMes);
+      if (base < hoy0) base = new Date(ahora.getFullYear(), ahora.getMonth() + 1, +m.diaMes);
+    } else if (puntual) {
       const [ay, am, ad] = String(m.fecha).split("-").map(Number);
       base = new Date(ay, (am || 1) - 1, ad || 1);
     } else {
@@ -4579,7 +4609,8 @@ function armarICSDeMarcas(marcas, anticipacion) {
     L.push("DTSTAMP:" + icsFecha(/* @__PURE__ */ new Date(), false));
     L.push("DTSTART:" + icsFecha(ini, true));
     L.push("DTEND:" + icsFecha(fin, true));
-    if (!puntual) L.push("RRULE:FREQ=WEEKLY;BYDAY=" + BYDAY[m.dia]);
+    if (mensual) L.push("RRULE:FREQ=MONTHLY;BYMONTHDAY=" + +m.diaMes);
+    else if (!puntual) L.push("RRULE:FREQ=WEEKLY;BYDAY=" + BYDAY[m.dia]);
     L.push("SUMMARY:" + icsEscapar(m.titulo));
     if (m.area) L.push("DESCRIPTION:" + icsEscapar(m.area));
     L.push("BEGIN:VALARM");
@@ -4770,8 +4801,8 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
   )), /* @__PURE__ */ React.createElement(PanelDiagnosticoAvisos, null), notifClavesOrden.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-400" }, "Todav\xEDa no marcaste ninguna actividad. Prend\xE9 el aviso al crearla \u2014el casillero \u201CAvisarme antes de que empiece\u201D est\xE1 en el mismo formulario\u2014 o con la campanita \u{1F514} en", /* @__PURE__ */ React.createElement("b", null, " Mi d\xEDa"), ", ", /* @__PURE__ */ React.createElement("b", null, "Rutina"), " y ", /* @__PURE__ */ React.createElement("b", null, "Obj. semanales"), ".") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500" }, "Avisando ", notifClavesOrden.length, " ", notifClavesOrden.length === 1 ? "actividad" : "actividades", " \u2014 la \u2715 apaga una:"), notifClavesOrden.map((k) => {
     const m = notifMarcas[k];
     const hoyISO2 = fechaISOde(/* @__PURE__ */ new Date());
-    const esHoy = m.fecha ? m.fecha === hoyISO2 : m.dia === currentDayKey(/* @__PURE__ */ new Date());
-    const cuando = m.fecha ? fechaDeISO(m.fecha).toLocaleDateString("es-AR", { day: "numeric", month: "short" }) : DIA_ES[m.dia] || m.dia;
+    const esHoy = m.diaMes ? (/* @__PURE__ */ new Date()).getDate() === +m.diaMes : m.fecha ? m.fecha === hoyISO2 : m.dia === currentDayKey(/* @__PURE__ */ new Date());
+    const cuando = m.diaMes ? `d\xEDa ${m.diaMes}` : m.fecha ? fechaDeISO(m.fecha).toLocaleDateString("es-AR", { day: "numeric", month: "short" }) : DIA_ES[m.dia] || m.dia;
     const pasado = !!m.fecha && m.fecha < hoyISO2;
     return /* @__PURE__ */ React.createElement("div", { key: k, className: `flex items-center gap-2 text-xs bg-white dark:bg-neutral-950 border rounded-lg px-2.5 py-1.5 ${esHoy ? "border-amber-300 dark:border-amber-800" : "border-neutral-200 dark:border-neutral-800"} ${pasado ? "opacity-50" : ""}` }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-amber-600 shrink-0" }, cuando, " ", m.hora), /* @__PURE__ */ React.createElement("span", { className: "truncate flex-1" }, m.titulo), m.fecha && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-sky-500 shrink-0" }, "una vez"), (m.ant === 0 || m.ant) && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-neutral-400 shrink-0" }, m.ant, "\u2032 antes"), esHoy && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-amber-600 shrink-0" }, "hoy"), /* @__PURE__ */ React.createElement(
       "button",
@@ -5051,16 +5082,48 @@ function PanelRecurrentes({ now, recs, setRecs, objetivos, taxonomia }) {
   const areaList = useMemo(() => areasDeTaxonomia(taxonomia), [taxonomia]);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const emptyForm = { categoria: "Personal", seccion: "", subseccion: "", tarea: "", frecuencia: "mensual", dia_mes: 1, dia_semana: "", hora: "" };
+  const [abierta, setAbierta] = useState(null);
+  const areaPorDefecto = useMemo(
+    () => areaList.some((a) => a.key === "Personal") ? "Personal" : areaList[0] && areaList[0].key || "Personal",
+    [areaList]
+  );
+  const emptyForm = {
+    categoria: areaPorDefecto,
+    seccion: "",
+    subseccion: "",
+    tarea: "",
+    descripcion: "",
+    frecuencia: "mensual",
+    dia_mes: 1,
+    dia_semana: "",
+    hora: "",
+    duracion: 30,
+    prioridad: "no-olvides"
+  };
   const [nuevo, setNuevo] = useState(emptyForm);
+  const [subText, setSubText] = useState("");
+  const [avisar, setAvisar] = useState(false);
+  const [antAviso, setAntAviso] = useState(null);
   const wk = weekKeyOf(now);
   const mo = monthKeyOf(now);
   const periodo = (r) => r.frecuencia === "mensual" ? mo : wk;
   const hecha = (r) => !!(r.completadas && r.completadas[periodo(r)]);
+  const subHecha = (r, sid) => !!((r.subs_hechas || {})[periodo(r)] || {})[sid];
+  const taxArea = useMemo(() => (taxonomia || []).find((t) => t.area === nuevo.categoria), [taxonomia, nuevo.categoria]);
   const secciones = useMemo(() => Array.from(/* @__PURE__ */ new Set([
-    ...seccionesDeArea(taxonomia, nuevo.categoria),
-    ...(objetivos || []).filter((o) => o.categoria === nuevo.categoria && o.seccion).map((o) => o.seccion)
-  ])), [objetivos, taxonomia, nuevo.categoria]);
+    ...((taxArea == null ? void 0 : taxArea.secciones) || []).map((x) => x.nombre).filter(Boolean),
+    ...(objetivos || []).filter((o) => o.categoria === nuevo.categoria && o.seccion).map((o) => o.seccion),
+    ...nuevo.seccion ? [nuevo.seccion] : []
+  ])), [taxArea, objetivos, nuevo.categoria, nuevo.seccion]);
+  const subsecciones = useMemo(() => {
+    var _a2;
+    return Array.from(/* @__PURE__ */ new Set([
+      ...(((_a2 = ((taxArea == null ? void 0 : taxArea.secciones) || []).find((x) => x.nombre === nuevo.seccion)) == null ? void 0 : _a2.subsecciones) || []).filter(Boolean),
+      ...nuevo.subseccion ? [nuevo.subseccion] : []
+    ]));
+  }, [taxArea, nuevo.seccion, nuevo.subseccion]);
+  const DURACIONES = [15, 30, 45, 60, 90, 120, 150, 180, 240];
+  const durLabel = (d) => d >= 60 ? `${Math.floor(d / 60)}h${d % 60 ? ` ${d % 60}'` : ""}` : `${d}'`;
   function toggle(r) {
     setRecs(recs.map((x) => {
       if (x.id !== r.id) return x;
@@ -5068,6 +5131,18 @@ function PanelRecurrentes({ now, recs, setRecs, objetivos, taxonomia }) {
       if (comp[periodo(x)]) delete comp[periodo(x)];
       else comp[periodo(x)] = hoyISO();
       return { ...x, completadas: comp };
+    }));
+  }
+  function toggleSub(r, sid) {
+    setRecs(recs.map((x) => {
+      if (x.id !== r.id) return x;
+      const per = periodo(x);
+      const todo = { ...x.subs_hechas || {} };
+      const mapa = { ...todo[per] || {} };
+      if (mapa[sid]) delete mapa[sid];
+      else mapa[sid] = true;
+      todo[per] = mapa;
+      return { ...x, subs_hechas: todo };
     }));
   }
   function guardar() {
@@ -5079,47 +5154,165 @@ function PanelRecurrentes({ now, recs, setRecs, objetivos, taxonomia }) {
       alert("Eleg\xED el d\xEDa del mes");
       return;
     }
-    if (editId) {
-      setRecs(recs.map((x) => x.id === editId ? { ...x, ...nuevo, titulo: void 0 } : x));
-    } else {
-      setRecs([...recs, { ...nuevo, id: "rec-" + Date.now() }]);
-    }
+    const prev = editId ? recs.find((x) => x.id === editId) : null;
+    const idPorTitulo = {};
+    (prev && prev.subtareas || []).forEach((st) => {
+      if (st && st.titulo) idPorTitulo[st.titulo] = st.id;
+    });
+    const subtareas = subText.split("\n").map((t) => t.trim()).filter(Boolean).map((t, i) => ({ id: `rs-${i}-${t.slice(0, 24)}`, titulo: t }));
+    const subsHechas = {};
+    Object.keys(prev && prev.subs_hechas || {}).forEach((per) => {
+      const mapa = prev.subs_hechas[per] || {};
+      const next = {};
+      subtareas.forEach((st) => {
+        const viejo = idPorTitulo[st.titulo];
+        if (viejo && mapa[viejo]) next[st.id] = true;
+      });
+      if (Object.keys(next).length) subsHechas[per] = next;
+    });
+    const id = editId || "rec-" + Date.now();
+    const datos = { ...nuevo, subtareas, subs_hechas: subsHechas, titulo: void 0 };
+    if (editId) setRecs(recs.map((x) => x.id === editId ? { ...x, ...datos } : x));
+    else setRecs([...recs, { ...datos, id }]);
+    aplicarAviso(`rec::${id}`, {
+      titulo: nuevo.tarea || nuevo.subseccion || nuevo.seccion,
+      hora: nuevo.hora,
+      dia: nuevo.frecuencia === "semanal" ? nuevo.dia_semana || null : null,
+      diaMes: nuevo.frecuencia === "mensual" ? nuevo.dia_mes : null,
+      area: nuevo.categoria,
+      duracion: nuevo.duracion || 30
+    }, { avisar, ant: antAviso });
+    cerrarForm();
+  }
+  function cerrarForm() {
     setNuevo(emptyForm);
+    setSubText("");
+    setAvisar(false);
+    setAntAviso(null);
     setShowForm(false);
     setEditId(null);
   }
   function editar(r) {
-    setNuevo({ categoria: r.categoria || "Personal", seccion: r.seccion || "", subseccion: r.subseccion || "", tarea: r.tarea || r.titulo || "", frecuencia: r.frecuencia || "mensual", dia_mes: r.dia_mes || 1, dia_semana: r.dia_semana || "", hora: r.hora || "" });
+    setNuevo({
+      categoria: r.categoria || areaPorDefecto,
+      seccion: r.seccion || "",
+      subseccion: r.subseccion || "",
+      tarea: r.tarea || r.titulo || "",
+      descripcion: r.descripcion || "",
+      frecuencia: r.frecuencia || "mensual",
+      dia_mes: r.dia_mes || 1,
+      dia_semana: r.dia_semana || "",
+      hora: r.hora || "",
+      duracion: r.duracion || 30,
+      prioridad: r.prioridad || "no-olvides"
+    });
+    setSubText((r.subtareas || []).map((s) => typeof s === "string" ? s : s.titulo).join("\n"));
+    const av = avisoDe(`rec::${r.id}`);
+    setAvisar(av.avisar);
+    setAntAviso(av.ant);
     setEditId(r.id);
     setShowForm(true);
   }
   function eliminar(id) {
-    if (confirm("\xBFEliminar esta tarea recurrente?")) setRecs(recs.filter((x) => x.id !== id));
+    if (!confirm("\xBFEliminar esta tarea recurrente?")) return;
+    aplicarAviso(`rec::${id}`, {}, { avisar: false });
+    setRecs(recs.filter((x) => x.id !== id));
   }
   const mensuales = recs.filter((r) => r.frecuencia === "mensual");
   const semanales = recs.filter((r) => r.frecuencia === "semanal");
   const pendMes = mensuales.filter((r) => !hecha(r)).length;
   const pendSem = semanales.filter((r) => !hecha(r)).length;
   const inputCls = "px-2.5 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm";
+  const hayHora = !!nuevo.hora && (nuevo.frecuencia === "mensual" || !!nuevo.dia_semana);
   const Grupo = ({ titulo, items, badge }) => /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[240px]" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-neutral-500 font-medium mb-1.5 flex items-center gap-1.5" }, titulo, badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-950/40 text-red-600 text-[10px]" }, badge, " pend.")), /* @__PURE__ */ React.createElement("div", { className: "space-y-0.5" }, items.map((r) => {
     var _a2;
     const done = hecha(r);
-    return /* @__PURE__ */ React.createElement("div", { key: r.id, className: "group flex items-start gap-2 p-1.5 rounded hover:bg-neutral-50 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: done, onChange: () => toggle(r), className: "mt-0.5 w-3.5 h-3.5 cursor-pointer", style: { accentColor: getAreaColor(r.categoria) } }), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm ${done ? "line-through text-neutral-400" : "text-neutral-800 dark:text-neutral-200"}` }, r.tarea || r.titulo || r.seccion), /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px]", style: { color: getAreaColor(r.categoria) } }, r.seccion || r.categoria), r.frecuencia === "mensual" && r.dia_mes && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] text-neutral-400" }, "d\xEDa ", r.dia_mes, r.hora ? ` \xB7 ${r.hora}` : ""), r.frecuencia === "semanal" && r.dia_semana && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] text-neutral-400" }, (_a2 = DIAS.find((d) => d.key === r.dia_semana)) == null ? void 0 : _a2.es, r.hora ? ` \xB7 ${r.hora}` : "")), /* @__PURE__ */ React.createElement("button", { onClick: () => editar(r), className: "jarvis-acciones p-0.5 text-neutral-300 hover:text-orange-500 opacity-0 group-hover:opacity-100", title: "Editar" }, /* @__PURE__ */ React.createElement(Pencil, { size: 12 })), /* @__PURE__ */ React.createElement("button", { onClick: () => eliminar(r.id), className: "jarvis-acciones p-0.5 text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100", title: "Eliminar" }, /* @__PURE__ */ React.createElement(Trash2, { size: 12 })));
+    const subs = r.subtareas || [];
+    const hechas = subs.filter((st) => subHecha(r, st.id)).length;
+    const abierto = abierta === r.id;
+    const prio = PRIORIDADES[r.prioridad || "no-olvides"];
+    return /* @__PURE__ */ React.createElement("div", { key: r.id, className: "group rounded hover:bg-neutral-50 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2 p-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: done, onChange: () => toggle(r), className: "mt-0.5 w-3.5 h-3.5 cursor-pointer", style: { accentColor: getAreaColor(r.categoria) } }), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm ${done ? "line-through text-neutral-400" : "text-neutral-800 dark:text-neutral-200"}` }, r.tarea || r.titulo || r.seccion), /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px]", style: { color: getAreaColor(r.categoria) } }, r.seccion || r.categoria, r.subseccion ? ` \u203A ${r.subseccion}` : ""), r.frecuencia === "mensual" && r.dia_mes && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] text-neutral-400" }, "d\xEDa ", r.dia_mes, r.hora ? ` \xB7 ${r.hora}` : ""), r.frecuencia === "semanal" && r.dia_semana && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] text-neutral-400" }, (_a2 = DIAS.find((d) => d.key === r.dia_semana)) == null ? void 0 : _a2.es, r.hora ? ` \xB7 ${r.hora}` : ""), r.prioridad && r.prioridad !== "no-olvides" && prio && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[9px] px-1 py-0.5 rounded", style: { color: prio.color, background: `${prio.color}18` } }, prio.label), r.descripcion && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 italic mt-0.5" }, r.descripcion), subs.length > 0 && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setAbierta(abierto ? null : r.id),
+        className: "mt-0.5 text-[10px] text-neutral-400 hover:text-orange-500 flex items-center gap-1"
+      },
+      /* @__PURE__ */ React.createElement(ChevronDown, { size: 10, className: `transition-transform ${abierto ? "rotate-180" : ""}` }),
+      hechas,
+      "/",
+      subs.length,
+      " subtareas"
+    )), /* @__PURE__ */ React.createElement("button", { onClick: () => editar(r), className: "jarvis-acciones p-0.5 text-neutral-300 hover:text-orange-500 opacity-0 group-hover:opacity-100", title: "Editar" }, /* @__PURE__ */ React.createElement(Pencil, { size: 12 })), /* @__PURE__ */ React.createElement("button", { onClick: () => eliminar(r.id), className: "jarvis-acciones p-0.5 text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100", title: "Eliminar" }, /* @__PURE__ */ React.createElement(Trash2, { size: 12 }))), abierto && subs.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "pl-8 pb-1.5 space-y-0.5" }, subs.map((st) => {
+      const ok = subHecha(r, st.id);
+      return /* @__PURE__ */ React.createElement("label", { key: st.id, className: "flex items-start gap-1.5 text-xs cursor-pointer" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ok, onChange: () => toggleSub(r, st.id), className: "mt-0.5 w-3 h-3", style: { accentColor: getAreaColor(r.categoria) } }), /* @__PURE__ */ React.createElement("span", { className: ok ? "line-through text-neutral-400" : "text-neutral-600 dark:text-neutral-300" }, st.titulo));
+    })));
   }), items.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400 italic p-1.5" }, "Nada por ac\xE1.")));
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-orange-200 dark:border-orange-900/40 bg-orange-50/40 dark:bg-orange-950/10 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15, className: "text-orange-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Recurrentes"), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "mes ", mo, " \xB7 semana ", wk.split("-")[1], pendMes + pendSem > 0 ? ` \xB7 ${pendMes + pendSem} pendientes` : " \xB7 todo al d\xEDa \u2713")), /* @__PURE__ */ React.createElement("button", { onClick: () => {
-    setShowForm(!showForm);
-    setEditId(null);
-    setNuevo(emptyForm);
-  }, className: "text-xs px-2.5 py-1 rounded-md border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-100/50 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(Plus, { size: 11 }), " ", showForm ? "Cancelar" : "Nueva recurrente")), showForm && /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg bg-white dark:bg-neutral-950 border border-orange-200 dark:border-orange-900 space-y-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "Categor\xEDa"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-orange-200 dark:border-orange-900/40 bg-orange-50/40 dark:bg-orange-950/10 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15, className: "text-orange-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Recurrentes"), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "mes ", mo, " \xB7 semana ", wk.split("-")[1], pendMes + pendSem > 0 ? ` \xB7 ${pendMes + pendSem} pendientes` : " \xB7 todo al d\xEDa \u2713")), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        if (showForm) cerrarForm();
+        else {
+          setNuevo(emptyForm);
+          setSubText("");
+          setAvisar(false);
+          setAntAviso(null);
+          setEditId(null);
+          setShowForm(true);
+        }
+      },
+      className: "text-xs px-2.5 py-1 rounded-md border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-100/50 flex items-center gap-1"
+    },
+    /* @__PURE__ */ React.createElement(Plus, { size: 11 }),
+    " ",
+    showForm ? "Cancelar" : "Nueva recurrente"
+  )), showForm && /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg bg-white dark:bg-neutral-950 border border-orange-200 dark:border-orange-900 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-orange-700 dark:text-orange-300 font-medium" }, editId ? "Editar recurrente" : "Nueva recurrente \u2014 se repite sola, todos los meses o todas las semanas"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "1. \xC1rea ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(definidas en Largo plazo)")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.key,
-      onClick: () => setNuevo({ ...nuevo, categoria: a.key }),
+      onClick: () => setNuevo({ ...nuevo, categoria: a.key, seccion: "", subseccion: "" }),
       className: "text-xs px-2 py-1 rounded-md border transition",
       style: { color: nuevo.categoria === a.key ? "#fff" : a.color, background: nuevo.categoria === a.key ? a.color : "transparent", borderColor: nuevo.categoria === a.key ? a.color : `${a.color}40` }
     },
     a.key
-  )))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Secci\xF3n (sub\xE1rea)"), /* @__PURE__ */ React.createElement("input", { type: "text", value: nuevo.seccion, onChange: (e) => setNuevo({ ...nuevo, seccion: e.target.value }), list: "rec-secciones", placeholder: "Ej: Facturaci\xF3n, Salud...", className: `${inputCls} w-full` }), /* @__PURE__ */ React.createElement("datalist", { id: "rec-secciones" }, secciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s })))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Subsecci\xF3n (opcional)"), /* @__PURE__ */ React.createElement("input", { type: "text", value: nuevo.subseccion, onChange: (e) => setNuevo({ ...nuevo, subseccion: e.target.value }), className: `${inputCls} w-full` }))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Tarea"), /* @__PURE__ */ React.createElement("input", { type: "text", value: nuevo.tarea, onChange: (e) => setNuevo({ ...nuevo, tarea: e.target.value }), placeholder: "Ej: Backup del CRM, Revisar seguros...", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Frecuencia"), /* @__PURE__ */ React.createElement("select", { value: nuevo.frecuencia, onChange: (e) => setNuevo({ ...nuevo, frecuencia: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "semanal" }, "Semanal"), /* @__PURE__ */ React.createElement("option", { value: "mensual" }, "Mensual"))), nuevo.frecuencia === "mensual" ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "D\xEDa del mes"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_mes || 1, onChange: (e) => setNuevo({ ...nuevo, dia_mes: Number(e.target.value) }), className: inputCls }, Array.from({ length: 31 }, (_, i) => i + 1).map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, d)))) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "D\xEDa de la semana"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_semana || "", onChange: (e) => setNuevo({ ...nuevo, dia_semana: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin d\xEDa fijo"), DIAS.map((d) => /* @__PURE__ */ React.createElement("option", { key: d.key, value: d.key }, d.full)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Hora (opcional)"), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: nuevo.hora, onChange: (e) => setNuevo({ ...nuevo, hora: e.target.value }), className: inputCls })), /* @__PURE__ */ React.createElement("button", { onClick: guardar, className: "px-3 py-1.5 rounded-md bg-orange-600 text-white text-sm font-medium" }, editId ? "Guardar" : "Agregar")), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400" }, nuevo.frecuencia === "mensual" ? `Aparece en el calendario, y en Mi d\xEDa / Semana cuando el d\xEDa ${nuevo.dia_mes} caiga en la semana en curso.` : nuevo.dia_semana ? `Aparece todas las semanas en Mi d\xEDa y en Semana, el ${(_a = DIAS.find((d) => d.key === nuevo.dia_semana)) == null ? void 0 : _a.full.toLowerCase()}${nuevo.hora ? ` a las ${nuevo.hora}` : " (sin horario fijo)"}.` : "Sin d\xEDa fijo queda solo en esta lista. Eleg\xED un d\xEDa para que baje a Mi d\xEDa y a Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-5" }, /* @__PURE__ */ React.createElement(Grupo, { titulo: "Una vez al mes", items: mensuales, badge: pendMes }), /* @__PURE__ */ React.createElement(Grupo, { titulo: "Una vez por semana", items: semanales, badge: pendSem })));
+  )))), /* @__PURE__ */ React.createElement("div", { className: "jarvis-form-2 grid grid-cols-1 sm:grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "2. Secci\xF3n ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(definidas en Largo plazo)")), /* @__PURE__ */ React.createElement("select", { value: nuevo.seccion, onChange: (e) => setNuevo({ ...nuevo, seccion: e.target.value, subseccion: "" }), className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 sin secci\xF3n \u2014"), secciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "3. Subsecci\xF3n ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional)")), /* @__PURE__ */ React.createElement("select", { value: nuevo.subseccion, onChange: (e) => setNuevo({ ...nuevo, subseccion: e.target.value }), disabled: !nuevo.seccion, className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, nuevo.seccion ? "\u2014 sin subsecci\xF3n \u2014" : "eleg\xED secci\xF3n primero"), subsecciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "4. Tarea"), /* @__PURE__ */ React.createElement("input", { type: "text", value: nuevo.tarea, onChange: (e) => setNuevo({ ...nuevo, tarea: e.target.value }), placeholder: "Ej: N\xFAmeros del mes, Revisar seguros...", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "Descripci\xF3n ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional \u2014 se lee en Mi d\xEDa y ac\xE1, no en Semana)")), /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      value: nuevo.descripcion,
+      onChange: (e) => setNuevo({ ...nuevo, descripcion: e.target.value }),
+      rows: 2,
+      placeholder: "El contexto que no entra en el t\xEDtulo: qu\xE9 hay que lograr, con qui\xE9n, qu\xE9 tener a mano...",
+      className: `${inputCls} w-full resize-y`
+    }
+  )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "Subtareas ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(una por l\xEDnea \u2014 se destildan solas al empezar el per\xEDodo siguiente)")), /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      value: subText,
+      onChange: (e) => setSubText(e.target.value),
+      rows: 3,
+      placeholder: "Bajar el resumen del mes\nCruzarlo con las operaciones\nMandarlo a facturar",
+      className: `${inputCls} w-full resize-y font-mono`
+    }
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "5. Frecuencia"), /* @__PURE__ */ React.createElement("select", { value: nuevo.frecuencia, onChange: (e) => setNuevo({ ...nuevo, frecuencia: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "semanal" }, "Semanal"), /* @__PURE__ */ React.createElement("option", { value: "mensual" }, "Mensual"))), nuevo.frecuencia === "mensual" ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "6. D\xEDa del mes"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_mes || 1, onChange: (e) => setNuevo({ ...nuevo, dia_mes: Number(e.target.value) }), className: inputCls }, Array.from({ length: 31 }, (_, i) => i + 1).map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, d)))) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "6. D\xEDa de la semana"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_semana || "", onChange: (e) => setNuevo({ ...nuevo, dia_semana: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin d\xEDa fijo"), DIAS.map((d) => /* @__PURE__ */ React.createElement("option", { key: d.key, value: d.key }, d.full)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "7. Hora ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional)")), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: nuevo.hora, onChange: (e) => setNuevo({ ...nuevo, hora: e.target.value }), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "8. Duraci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: nuevo.duracion, onChange: (e) => setNuevo({ ...nuevo, duracion: Number(e.target.value) }), disabled: !nuevo.hora, className: inputCls }, DURACIONES.map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, durLabel(d)))))), /* @__PURE__ */ React.createElement(
+    CampoAviso,
+    {
+      avisar,
+      setAvisar,
+      ant: antAviso,
+      setAnt: setAntAviso,
+      hayHora,
+      nota: !nuevo.hora ? "Necesita una hora para poder avisar." : nuevo.frecuencia === "semanal" && !nuevo.dia_semana ? "Necesita un d\xEDa fijo para poder avisar." : null
+    }
+  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "Prioridad"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 flex-wrap" }, Object.entries(PRIORIDADES).map(([k, p]) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: k,
+      onClick: () => setNuevo({ ...nuevo, prioridad: k }),
+      className: "text-xs px-2.5 py-1 rounded-md border transition",
+      style: { color: nuevo.prioridad === k ? "#fff" : p.color, background: nuevo.prioridad === k ? p.color : "transparent", borderColor: p.color + "60" }
+    },
+    p.label
+  )))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 pt-1" }, /* @__PURE__ */ React.createElement("button", { onClick: guardar, className: "px-3 py-1.5 rounded-md bg-orange-600 text-white text-sm font-medium" }, editId ? "Guardar" : "Agregar"), /* @__PURE__ */ React.createElement("button", { onClick: cerrarForm, className: "px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm" }, "Cancelar")), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400" }, nuevo.frecuencia === "mensual" ? `Aparece en el calendario, y en Mi d\xEDa / Semana cuando el d\xEDa ${nuevo.dia_mes} caiga en la semana en curso. Se destilda sola al empezar el mes siguiente.` : nuevo.dia_semana ? `Aparece todas las semanas en Mi d\xEDa y en Semana, el ${(_a = DIAS.find((d) => d.key === nuevo.dia_semana)) == null ? void 0 : _a.full.toLowerCase()}${nuevo.hora ? ` a las ${nuevo.hora}` : " (sin horario fijo)"}. Se destilda sola al empezar la semana siguiente.` : "Sin d\xEDa fijo queda solo en esta lista. Eleg\xED un d\xEDa para que baje a Mi d\xEDa y a Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-5" }, /* @__PURE__ */ React.createElement(Grupo, { titulo: "Una vez al mes", items: mensuales, badge: pendMes }), /* @__PURE__ */ React.createElement(Grupo, { titulo: "Una vez por semana", items: semanales, badge: pendSem })));
 }
 function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, weekDates, setSelectedDay, setTab, rutinaTick, recurrentes, setRecurrentes, taxonomia, eventos, agregarEvento, editarEvento, eliminarEvento }) {
   const [formEvento, setFormEvento] = useState(null);
@@ -8206,6 +8399,19 @@ function App() {
       return { ...r, completadas: comp };
     }));
   }
+  function toggleSubRecurrente(recId, subId) {
+    const realId = String(recId).replace(/^rec-/, "");
+    persistRecurrentes(recurrentes.map((r) => {
+      if (r.id !== realId) return r;
+      const per = r.frecuencia === "semanal" ? weekKeyOf(now) : monthKeyOf(now);
+      const todo = { ...r.subs_hechas || {} };
+      const mapa = { ...todo[per] || {} };
+      if (mapa[subId]) delete mapa[subId];
+      else mapa[subId] = true;
+      todo[per] = mapa;
+      return { ...r, subs_hechas: todo };
+    }));
+  }
   const aplicarLP = useCallback((fn) => {
     setLpModel((prev) => {
       const next = typeof fn === "function" ? fn(prev) : fn;
@@ -8461,6 +8667,7 @@ function App() {
       objetivosVista,
       setObjetivos: setObjetivosPersist,
       onToggleRecurrente: toggleRecurrenteObjetivo,
+      onToggleSubRecurrente: toggleSubRecurrente,
       taxonomia,
       checklists,
       setChecklists: setChecklistsState,
@@ -8547,6 +8754,7 @@ function App() {
       lpObjetivos: lpObjetivosCompat,
       marcarHitoLP,
       recurrentesSemana,
+      onToggleSubRecurrente: toggleSubRecurrente,
       onToggleRecurrente: toggleRecurrenteObjetivo
     }
   ), tab === "largoplazo" && /* @__PURE__ */ React.createElement(
