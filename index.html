@@ -8210,7 +8210,7 @@ function NotaLienzo({ nota, esMobile, api }) {
   function calcVista() {
     const sc = scrollRef.current;
     const cw = sc.clientWidth, ch = sc.clientHeight;
-    const base = Math.max(240, Math.min(cw - (esMobile ? 0 : 32), 860));
+    const base = Math.max(240, Math.min(cw - (esMobile ? 0 : 16), 1600));
     const pageW = base * zoom.current;
     const s = pageW / NOTA_W;
     return { cw, ch, s, pageW, ox: Math.max(0, (cw - pageW) / 2) };
@@ -9030,6 +9030,10 @@ function Notas() {
   const [menu, setMenu] = useState(false);
   const [cargada, setCargada] = useState(false);
   const lienzoApi = useRef(null);
+  const [listaAbierta, setListaAbierta] = useState(() => notaUI().lista !== false);
+  useEffect(() => {
+    guardarNotaUI({ lista: listaAbierta });
+  }, [listaAbierta]);
   function esMobileInicial() {
     try {
       return window.matchMedia("(max-width: 767px)").matches;
@@ -9123,23 +9127,7 @@ function Notas() {
     },
     label
   );
-  const panelLista = /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: nueva, className: "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-neutral-950 text-sm font-medium" }, /* @__PURE__ */ React.createElement(Plus, { size: 16 }), " Nueva nota"), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setGestionTipos(!gestionTipos),
-      title: "Tipos de nota",
-      className: `p-2 rounded-lg border ${gestionTipos ? "border-amber-500 text-amber-600" : "border-neutral-200 dark:border-neutral-800 text-neutral-500"}`
-    },
-    /* @__PURE__ */ React.createElement(Tags, { size: 16 })
-  )), /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement(Search, { size: 14, className: "absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" }), /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      value: busca,
-      onChange: (e) => setBusca(e.target.value),
-      placeholder: "Buscar por t\xEDtulo o tipo",
-      className: "w-full pl-8 pr-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-transparent text-sm outline-none focus:border-amber-500"
-    }
-  )), gestionTipos && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-amber-300 dark:border-amber-800 p-2.5 space-y-2 bg-amber-50/50 dark:bg-amber-950/20" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, "Tipos de nota"), tipos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500" }, "Todav\xEDa no hay tipos. Cre\xE1 el primero (p. ej. Clientes, Facultad, Ideas)."), tipos.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
+  const panelTipos = /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-amber-300 dark:border-amber-800 p-2.5 space-y-2 bg-amber-50/50 dark:bg-amber-950/20" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, "Tipos de nota"), tipos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500" }, "Todav\xEDa no hay tipos. Cre\xE1 el primero (p. ej. Clientes, Facultad, Ideas)."), tipos.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       defaultValue: t.nombre,
@@ -9169,7 +9157,24 @@ function Notas() {
       placeholder: "Nuevo tipo\u2026",
       className: "flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     }
-  ), /* @__PURE__ */ React.createElement("button", { onClick: agregarTipo, className: "px-2 py-1 rounded bg-amber-500 text-neutral-950 text-xs font-medium" }, "Agregar"))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, chip("todas", "Todas"), tipos.map((t) => chip(t.id, t.nombre)), chip("sin", "Sin tipo")), /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, !cargada && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400" }, "Abriendo el anotador\u2026"), cargada && todas.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 p-4 text-center" }, "Todav\xEDa no hay notas. Toc\xE1 ", /* @__PURE__ */ React.createElement("b", null, "Nueva nota"), " y escrib\xED con el l\xE1piz."), cargada && todas.length > 0 && grupos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400" }, "Nada coincide con el filtro."), grupos.map((g) => /* @__PURE__ */ React.createElement("div", { key: g.id }, filtro === "todas" && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-neutral-400 font-medium mb-1 px-1" }, g.nombre, " \xB7 ", g.notas.length), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, g.notas.map((n) => /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("button", { onClick: agregarTipo, className: "px-2 py-1 rounded bg-amber-500 text-neutral-950 text-xs font-medium" }, "Agregar")));
+  const panelLista = /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: nueva, className: "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-neutral-950 text-sm font-medium" }, /* @__PURE__ */ React.createElement(Plus, { size: 16 }), " Nueva nota"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setGestionTipos(!gestionTipos),
+      title: "Tipos de nota",
+      className: `p-2 rounded-lg border ${gestionTipos ? "border-amber-500 text-amber-600" : "border-neutral-200 dark:border-neutral-800 text-neutral-500"}`
+    },
+    /* @__PURE__ */ React.createElement(Tags, { size: 16 })
+  )), /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement(Search, { size: 14, className: "absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" }), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: busca,
+      onChange: (e) => setBusca(e.target.value),
+      placeholder: "Buscar por t\xEDtulo o tipo",
+      className: "w-full pl-8 pr-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-transparent text-sm outline-none focus:border-amber-500"
+    }
+  )), gestionTipos && panelTipos, /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, chip("todas", "Todas"), tipos.map((t) => chip(t.id, t.nombre)), chip("sin", "Sin tipo")), /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, !cargada && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400" }, "Abriendo el anotador\u2026"), cargada && todas.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 p-4 text-center" }, "Todav\xEDa no hay notas. Toc\xE1 ", /* @__PURE__ */ React.createElement("b", null, "Nueva nota"), " y escrib\xED con el l\xE1piz."), cargada && todas.length > 0 && grupos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400" }, "Nada coincide con el filtro."), grupos.map((g) => /* @__PURE__ */ React.createElement("div", { key: g.id }, filtro === "todas" && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-neutral-400 font-medium mb-1 px-1" }, g.nombre, " \xB7 ", g.notas.length), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, g.notas.map((n) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: n.id,
@@ -9179,6 +9184,43 @@ function Notas() {
     /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium truncate" }, n.titulo || "Sin t\xEDtulo"),
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-[11px] text-neutral-500 mt-0.5" }, tipoValido(n.tipo) && filtro === "todas" ? null : tipoValido(n.tipo) ? /* @__PURE__ */ React.createElement("span", { className: "truncate" }, nombreTipo(n.tipo)) : null, /* @__PURE__ */ React.createElement("span", null, fmt(n.t)), n.casillas && n.casillas.length > 0 && /* @__PURE__ */ React.createElement("span", null, "\u2611 ", n.casillas.filter((c) => c.ok).length, "/", n.casillas.length))
   )))))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-400 px-1", title: nb.detalle }, nubeTxt, nb.fase === "permiso" || nb.fase === "error" ? " \u2014 " + nb.detalle : ""));
+  const tarjeta = (n) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: n.id,
+      onClick: () => setAbierta(n.id),
+      className: `w-52 shrink-0 text-left px-2.5 py-2 rounded-lg border transition-colors ${abierta === n.id ? "border-amber-500 bg-amber-50 dark:bg-amber-950/30" : "border-neutral-200 dark:border-neutral-800 hover:border-amber-400"}`
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium truncate" }, n.titulo || "Sin t\xEDtulo"),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-[11px] text-neutral-500 mt-0.5 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: "truncate" }, tipoValido(n.tipo) ? nombreTipo(n.tipo) : "Sin tipo"), /* @__PURE__ */ React.createElement("span", { className: "shrink-0" }, fmt(n.t)), n.casillas && n.casillas.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "shrink-0" }, "\u2611 ", n.casillas.filter((c) => c.ok).length, "/", n.casillas.length))
+  );
+  const panelArriba = /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-950/60 p-2 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: nueva, className: "flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 text-neutral-950 text-sm font-medium shrink-0" }, /* @__PURE__ */ React.createElement(Plus, { size: 16 }), " Nueva nota"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setListaAbierta(!listaAbierta),
+      title: listaAbierta ? "Plegar la lista para ganar espacio" : "Ver todas las notas",
+      className: "flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 text-sm text-neutral-600 dark:text-neutral-300 shrink-0"
+    },
+    listaAbierta ? /* @__PURE__ */ React.createElement(ChevronUp, { size: 15 }) : /* @__PURE__ */ React.createElement(ChevronDown, { size: 15 }),
+    listaAbierta ? "Ocultar notas" : `Notas (${todas.length})`
+  ), listaAbierta && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "relative w-52 shrink-0" }, /* @__PURE__ */ React.createElement(Search, { size: 14, className: "absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" }), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: busca,
+      onChange: (e) => setBusca(e.target.value),
+      placeholder: "Buscar",
+      className: "w-full pl-8 pr-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-transparent text-sm outline-none focus:border-amber-500"
+    }
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, chip("todas", "Todas"), tipos.map((t) => chip(t.id, t.nombre)), chip("sin", "Sin tipo")), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setGestionTipos(!gestionTipos),
+      title: "Crear, renombrar o borrar tipos de nota",
+      className: `flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs shrink-0 ${gestionTipos ? "border-amber-500 text-amber-600" : "border-neutral-200 dark:border-neutral-800 text-neutral-500"}`
+    },
+    /* @__PURE__ */ React.createElement(Tags, { size: 14 }),
+    " Tipos"
+  )), /* @__PURE__ */ React.createElement("div", { className: "ml-auto text-[11px] text-neutral-400 shrink-0", title: nb.detalle }, nubeTxt)), listaAbierta && gestionTipos && /* @__PURE__ */ React.createElement("div", { className: "max-w-md" }, panelTipos), listaAbierta && (nb.fase === "permiso" || nb.fase === "error") && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-amber-600 px-1" }, nb.detalle), listaAbierta && (!cargada ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400 px-1" }, "Abriendo el anotador\u2026") : todas.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500 px-1" }, "Todav\xEDa no hay notas. Toc\xE1 ", /* @__PURE__ */ React.createElement("b", null, "Nueva nota"), " y escrib\xED con el l\xE1piz.") : visibles.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400 px-1" }, "Nada coincide con el filtro.") : /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 overflow-x-auto pb-1" }, visibles.map(tarjeta))));
   const encabezado = nota && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, esMobile && /* @__PURE__ */ React.createElement("button", { onClick: () => setAbierta(null), className: "p-2 -ml-1 rounded-lg text-neutral-500 hover:text-amber-600", title: "Volver a la lista" }, /* @__PURE__ */ React.createElement(ArrowLeft, { size: 18 })), /* @__PURE__ */ React.createElement(
     "input",
     {
@@ -9228,7 +9270,7 @@ function Notas() {
   if (esMobile) {
     return nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: true, api: lienzoApi })) : panelLista;
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "w-64 shrink-0" }, panelLista), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 space-y-2" }, nota ? /* @__PURE__ */ React.createElement(React.Fragment, null, encabezado, /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: false, api: lienzoApi })) : /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-10 text-center text-sm text-neutral-500" }, "Eleg\xED una nota de la lista o cre\xE1 una nueva.")));
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, panelArriba, nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: false, api: lienzoApi })) : /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-10 text-center text-sm text-neutral-500" }, "Eleg\xED una nota de arriba o cre\xE1 una nueva."));
 }
 const AYUDA = {
   notas: {
@@ -9240,6 +9282,7 @@ const AYUDA = {
       ["Casilla \u2611", "toc\xE1 donde va y aparece una casilla alineada al rengl\xF3n; despu\xE9s segu\xEDs escribiendo. Tocar una casilla la tilda o destilda."],
       ["Tachar (\u224B)", "como en Nebo: un zigzag encima de lo escrito lo borra. Se apaga con ese mismo bot\xF3n."],
       ["Mano", "decide si el dedo escribe o s\xF3lo mueve la hoja. Apenas se usa un l\xE1piz, el dedo pasa a mover solo (y la palma no raya)."],
+      ["Ocultar notas", "pliega la franja de arriba para que la hoja tenga m\xE1s lugar."],
       ["Tipos (etiqueta)", "crea, renombra o borra tipos. Borrar un tipo NO borra sus notas: pasan a \u201CSin tipo\u201D."],
       ["\u22EF", "descargar la nota como imagen, duplicarla o borrarla."]
     ],
