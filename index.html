@@ -698,7 +698,8 @@
         (function intentar() {
           var a = document.activeElement;
           var escribiendo = !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
-          var recien = (Date.now() - ultimoLocal) < 6000;
+          // también cuenta el lápiz sobre una nota (no pasa por storage.set)
+          var recien = (Date.now() - Math.max(ultimoLocal, window.__jarvisUltimoToque || 0)) < 6000;
           var vencido = (Date.now() - desde) > 30000;   // tope: no esperar para siempre
           if (escribiendo || (recien && !vencido)) { setTimeout(intentar, 2000); return; }
           fase("bajando");
@@ -1175,7 +1176,10 @@
         onEstado: function (cb) { oyentes.push(cb); cb(window.JarvisSync.estado()); },
         forzar: function () { adoptarTodo(); },
         montado: function () { montado = true; },
-        subirYa: function () { clearTimeout(timer); subir(); }
+        subirYa: function () { clearTimeout(timer); subir(); },
+        // Las notas a mano viven en la subcolección jarvis/{uid}/notas: pesan
+        // demasiado para el documento principal (tope de 1 MB en total).
+        docRef: function () { return ref; }
       };
 
       // Si se importa un backup, que también vaya a la nube.
@@ -1466,6 +1470,23 @@ const AlertCircle = LucideIcon("AlertCircle");
 const CalendarPlus = LucideIcon("CalendarPlus");
 const CalendarCheck = LucideIcon("CalendarCheck");
 const Clock = LucideIcon("Clock");
+const NotebookPen = LucideIcon("NotebookPen");
+const PenLine = LucideIcon("PenLine");
+const Eraser = LucideIcon("Eraser");
+const Lasso = LucideIcon("Lasso");
+const SquareCheck = LucideIcon("SquareCheck");
+const Undo2 = LucideIcon("Undo2");
+const Redo2 = LucideIcon("Redo2");
+const Hand = LucideIcon("Hand");
+const ZoomIn = LucideIcon("ZoomIn");
+const ZoomOut = LucideIcon("ZoomOut");
+const Copy = LucideIcon("Copy");
+const Search = LucideIcon("Search");
+const Ellipsis = LucideIcon("Ellipsis");
+const Tags = LucideIcon("Tags");
+const ImageDown = LucideIcon("ImageDown");
+const Minimize2 = LucideIcon("Minimize2");
+const Maximize2 = LucideIcon("Maximize2");
 const ClipboardList = LucideIcon("ClipboardList");
 const Trophy = LucideIcon("Trophy");
 const Download = LucideIcon("Download");
@@ -7568,7 +7589,1666 @@ function BackupControl() {
     )
   )));
 }
+const NotasStore = function() {
+  const notas = /* @__PURE__ */ new Map();
+  const oyentes = /* @__PURE__ */ new Set();
+  const sucias = /* @__PURE__ */ new Set();
+  let db = null, col = null, listo = null, timer = null, primeraFoto = false, intentos = 0;
+  let nube = { fase: "local", detalle: "" };
+  function nuevoId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+  function owner() {
+    try {
+      return localStorage.getItem("jarvis:owner") || "local";
+    } catch (_) {
+      return "local";
+    }
+  }
+  function emitir() {
+    oyentes.forEach((f) => {
+      try {
+        f();
+      } catch (_) {
+      }
+    });
+  }
+  function setNube(f, d) {
+    nube = { fase: f, detalle: d || "" };
+    emitir();
+  }
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  function abrir() {
+    return new Promise((res) => {
+      try {
+        const rq = indexedDB.open("jarvis-notas-" + owner(), 1);
+        rq.onupgradeneeded = () => rq.result.createObjectStore("notas", { keyPath: "id" });
+        rq.onsuccess = () => res(rq.result);
+        rq.onerror = () => res(null);
+      } catch (_) {
+        res(null);
+      }
+    });
+  }
+  function idbTodas() {
+    return new Promise((res) => {
+      if (!db) return res([]);
+      try {
+        const rq = db.transaction("notas").objectStore("notas").getAll();
+        rq.onsuccess = () => res(rq.result || []);
+        rq.onerror = () => res([]);
+      } catch (_) {
+        res([]);
+      }
+    });
+  }
+  function idbPut(n, sucia) {
+    if (!db) return;
+    try {
+      db.transaction("notas", "readwrite").objectStore("notas").put({ ...n, _sucia: !!sucia });
+    } catch (e) {
+      console.warn("[Notas] no pude guardar en IndexedDB", e);
+    }
+  }
+  function codificar(n) {
+    return JSON.stringify({
+      v: 1,
+      titulo: n.titulo || "",
+      tipo: n.tipo || "",
+      creada: n.creada || 0,
+      reglado: n.reglado || "lineas",
+      alto: Math.round(n.alto || 0),
+      casillas: (n.casillas || []).map((c) => [r1(c.x), r1(c.y), r1(c.s), c.ok ? 1 : 0, c.c || "negro"]),
+      trazos: (n.trazos || []).map((t) => {
+        const q = [];
+        let px = 0, py = 0, pp = 0;
+        for (let i = 0; i < t.p.length; i += 3) {
+          const x = Math.round(t.p[i] * 2), y = Math.round(t.p[i + 1] * 2), p = Math.round(t.p[i + 2] * 15);
+          q.push(x - px, y - py, p - pp);
+          px = x;
+          py = y;
+          pp = p;
+        }
+        return [t.c, r2(t.w), q.join(",")];
+      })
+    });
+  }
+  function decodificar(id, t, datos) {
+    try {
+      const o = JSON.parse(datos);
+      return {
+        id,
+        t,
+        titulo: o.titulo || "",
+        tipo: o.tipo || "",
+        creada: o.creada || 0,
+        reglado: o.reglado || "lineas",
+        alto: o.alto || 0,
+        casillas: (o.casillas || []).map((a) => ({ x: a[0], y: a[1], s: a[2], ok: !!a[3], c: a[4] || "negro" })),
+        trazos: (o.trazos || []).map((a) => {
+          const q = a[2] ? String(a[2]).split(",").map(Number) : [];
+          const p = [];
+          let x = 0, y = 0, pr = 0;
+          for (let i = 0; i + 2 < q.length; i += 3) {
+            x += q[i];
+            y += q[i + 1];
+            pr += q[i + 2];
+            p.push(x / 2, y / 2, pr / 15);
+          }
+          return { c: a[0], w: a[1], p };
+        })
+      };
+    } catch (e) {
+      console.warn("[Notas] nota ilegible en la nube:", id, e);
+      return null;
+    }
+  }
+  function conectar() {
+    const S = window.JarvisSync;
+    const ref = S && S.docRef ? S.docRef() : null;
+    if (!ref) {
+      setNube("local", "Sin sesi\xF3n en la nube: las notas quedan guardadas en este aparato.");
+      if (intentos++ < 20) setTimeout(conectar, 3e3);
+      return;
+    }
+    col = ref.collection("notas");
+    col.onSnapshot((snap) => {
+      let cambio = false;
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === "removed") return;
+        const id = ch.doc.id, d = ch.doc.data() || {};
+        const rt = +d.t || 0, loc = notas.get(id), lt = loc ? loc.t || 0 : 0;
+        if (rt > lt) {
+          const n = d.borrado ? { id, t: rt, borrado: true } : decodificar(id, rt, d.datos || "");
+          if (!n) return;
+          notas.set(id, n);
+          sucias.delete(id);
+          idbPut(n, false);
+          cambio = true;
+        } else if (lt > rt) sucias.add(id);
+      });
+      if (!primeraFoto) {
+        primeraFoto = true;
+        const alla = new Set(snap.docs.map((d) => d.id));
+        notas.forEach((n, id) => {
+          if (!alla.has(id)) sucias.add(id);
+        });
+      }
+      if (sucias.size) programar(400);
+      else if (nube.fase !== "subiendo") setNube("ok");
+      if (cambio) emitir();
+    }, (e) => {
+      const c = e && e.code || "";
+      col = null;
+      if (c === "permission-denied") setNube("permiso", "La regla de Firestore todav\xEDa no tiene el bloque de notas: por ahora se guardan s\xF3lo en este aparato.");
+      else setNube("error", e && e.message || "se cort\xF3 la conexi\xF3n");
+    });
+  }
+  function programar(ms) {
+    clearTimeout(timer);
+    timer = setTimeout(subir, ms);
+  }
+  function subir() {
+    if (!col || !sucias.size) return;
+    const ids = Array.from(sucias);
+    sucias.clear();
+    setNube("subiendo");
+    let pendientes = ids.length, fallo = null;
+    const terminar = () => {
+      if (fallo) {
+        setNube("error", fallo);
+        programar(8e3);
+      } else if (!sucias.size) setNube("ok");
+    };
+    ids.forEach((id) => {
+      const n = notas.get(id);
+      if (!n) {
+        if (--pendientes === 0) terminar();
+        return;
+      }
+      const doc = n.borrado ? { t: n.t, borrado: true } : { t: n.t, borrado: false, datos: codificar(n) };
+      if (doc.datos && doc.datos.length > 1e6) {
+        fallo = "La nota \u201C" + (n.titulo || "sin t\xEDtulo") + "\u201D pas\xF3 1 MB y la nube no la acepta. Partila en dos.";
+        if (--pendientes === 0) terminar();
+        return;
+      }
+      const t0 = n.t;
+      col.doc(id).set(doc).then(() => {
+        const a = notas.get(id);
+        if (a && a.t === t0) idbPut(a, false);
+      }).catch((e) => {
+        sucias.add(id);
+        fallo = e && e.message || "no pude guardar";
+      }).then(() => {
+        if (--pendientes === 0) terminar();
+      });
+    });
+  }
+  try {
+    window.addEventListener("pagehide", () => {
+      clearTimeout(timer);
+      subir();
+    });
+  } catch (_) {
+  }
+  function guardar(n) {
+    n.t = Math.max(Date.now(), (n.t || 0) + 1);
+    notas.set(n.id, n);
+    sucias.add(n.id);
+    idbPut(n, true);
+    emitir();
+    programar(2e3);
+    return n;
+  }
+  return {
+    iniciar() {
+      if (!listo) listo = (async () => {
+        db = await abrir();
+        const todas = await idbTodas();
+        todas.forEach((r) => {
+          const { _sucia, ...n } = r;
+          notas.set(n.id, n);
+          if (_sucia) sucias.add(n.id);
+        });
+        emitir();
+        conectar();
+      })();
+      return listo;
+    },
+    suscribir(f) {
+      oyentes.add(f);
+      return () => oyentes.delete(f);
+    },
+    lista() {
+      return Array.from(notas.values()).filter((n) => !n.borrado).sort((a, b) => (b.t || 0) - (a.t || 0));
+    },
+    obtener(id) {
+      const n = notas.get(id);
+      return n && !n.borrado ? n : null;
+    },
+    nube() {
+      return nube;
+    },
+    crear(datos) {
+      return guardar({ id: nuevoId(), titulo: "", tipo: "", reglado: "lineas", alto: 0, trazos: [], casillas: [], creada: Date.now(), ...datos });
+    },
+    guardar,
+    borrar(id) {
+      const n = { id, t: Date.now(), borrado: true };
+      notas.set(id, n);
+      sucias.add(id);
+      idbPut(n, true);
+      emitir();
+      programar(500);
+    },
+    peso(n) {
+      try {
+        return codificar(n).length;
+      } catch (_) {
+        return 0;
+      }
+    },
+    // para pruebas y diagnóstico desde la consola
+    _estado() {
+      return { notas: notas.size, sucias: Array.from(sucias), nube, conCol: !!col };
+    }
+  };
+}();
+window.JarvisNotas = NotasStore;
+const NOTA_W = 1e3;
+const NOTA_R = 44;
+const NOTA_TOPE = 88;
+const NOTA_MARGEN = 90;
+const NOTA_TINTAS = [
+  { k: "azul", claro: "#1d4ed8", oscuro: "#7aa7ff", nombre: "Azul" },
+  { k: "negro", claro: "#1c1917", oscuro: "#f2efe8", nombre: "Negro" },
+  { k: "rojo", claro: "#dc2626", oscuro: "#ff7b7b", nombre: "Rojo" },
+  { k: "verde", claro: "#15803d", oscuro: "#5fd08a", nombre: "Verde" }
+];
+const NOTA_LAPIZ = [1.6, 2.6, 4.2, 7];
+const NOTA_GOMA = [8, 18, 36, 70];
+const NOTA_ZMIN = 0.5, NOTA_ZMAX = 3;
+const NOTA_PR_SIN = 0.6;
+function notaTinta(k, oscuro) {
+  const t = NOTA_TINTAS.find((x) => x.k === k) || NOTA_TINTAS[1];
+  return oscuro ? t.oscuro : t.claro;
+}
+function notaUI() {
+  try {
+    return JSON.parse(localStorage.getItem("jarvis:notas_ui") || "{}");
+  } catch (_) {
+    return {};
+  }
+}
+function guardarNotaUI(p) {
+  try {
+    localStorage.setItem("jarvis:notas_ui", JSON.stringify({ ...notaUI(), ...p }));
+  } catch (_) {
+  }
+}
+const notaPrF = (pr) => Math.round((0.35 + 1.1 * pr) * 10) / 10;
+function notaCaja(t) {
+  if (t._caja) return t._caja;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < t.p.length; i += 3) {
+    const x = t.p[i], y = t.p[i + 1];
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  }
+  const m = t.w * 1.6;
+  const c = { x0: x0 - m, y0: y0 - m, x1: x1 + m, y1: y1 + m };
+  try {
+    Object.defineProperty(t, "_caja", { value: c, enumerable: false });
+  } catch (_) {
+  }
+  return c;
+}
+function casillaCaja(c) {
+  const h = c.s / 2;
+  return { x0: c.x - h, y0: c.y - h, x1: c.x + h, y1: c.y + h };
+}
+function distSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  let t = L ? ((px - ax) * dx + (py - ay) * dy) / L : 0;
+  t = Math.max(0, Math.min(1, t));
+  const x = ax + t * dx - px, y = ay + t * dy - py;
+  return Math.sqrt(x * x + y * y);
+}
+function enPoligono(x, y, poly) {
+  let dentro = false;
+  for (let i = 0, j = poly.length - 2; i < poly.length; j = i, i += 2) {
+    const xi = poly[i], yi = poly[i + 1], xj = poly[j], yj = poly[j + 1];
+    if (yi > y !== yj > y && x < (xj - xi) * (y - yi) / (yj - yi) + xi) dentro = !dentro;
+  }
+  return dentro;
+}
+function remuestrear(p, paso) {
+  const out = [p[0], p[1], p[2]];
+  for (let i = 3; i < p.length; i += 3) {
+    const ax = p[i - 3], ay = p[i - 2], ap = p[i - 1], bx = p[i], by = p[i + 1], bp = p[i + 2];
+    const d = Math.hypot(bx - ax, by - ay), n = Math.floor(d / paso);
+    for (let k = 1; k <= n; k++) {
+      const f = k / (n + 1);
+      out.push(ax + (bx - ax) * f, ay + (by - ay) * f, ap + (bp - ap) * f);
+    }
+    out.push(bx, by, bp);
+  }
+  return out;
+}
+function simplificar(p, eps) {
+  const n = p.length / 3;
+  if (n < 3) return p;
+  const keep = new Uint8Array(n);
+  keep[0] = keep[n - 1] = 1;
+  const pila = [[0, n - 1]];
+  while (pila.length) {
+    const [a, b] = pila.pop();
+    let max = 0, idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const d = distSeg(p[i * 3], p[i * 3 + 1], p[a * 3], p[a * 3 + 1], p[b * 3], p[b * 3 + 1]);
+      const dp = Math.abs(p[i * 3 + 2] - (p[a * 3 + 2] + p[b * 3 + 2]) / 2) * 3;
+      const m = Math.max(d, dp);
+      if (m > max) {
+        max = m;
+        idx = i;
+      }
+    }
+    if (max > eps && idx > 0) {
+      keep[idx] = 1;
+      pila.push([a, idx], [idx, b]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+  return out;
+}
+function esTachon(p) {
+  const n = p.length / 3;
+  if (n < 8) return false;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, L = 0;
+  for (let i = 0; i < n; i++) {
+    const x = p[i * 3], y = p[i * 3 + 1];
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+    if (i) L += Math.hypot(x - p[i * 3 - 3], y - p[i * 3 - 2]);
+  }
+  const w = x1 - x0, h = y1 - y0, ext = Math.max(w, h);
+  if (ext < 12 || L < 3 * ext) return false;
+  const eje = w >= h ? 0 : 1, umbral = ext * 0.45;
+  let tramos = 0, dir = 0, run = 0;
+  for (let i = 1; i < n; i++) {
+    const d = p[i * 3 + eje] - p[i * 3 - 3 + eje];
+    const sg = Math.sign(d);
+    if (!sg) continue;
+    if (sg !== dir) {
+      if (run > umbral) tramos++;
+      dir = sg;
+      run = 0;
+    }
+    run += Math.abs(d);
+  }
+  if (run > umbral) tramos++;
+  return tramos >= 5;
+}
+function dibujarTrazo(ctx, t, color) {
+  const p = t.p, n = p.length / 3;
+  if (!n) return;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const W = (i2) => t.w * notaPrF(p[i2 * 3 + 2]);
+  if (n === 1) {
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], Math.max(0.6, W(0) / 2), 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  let lx = p[0], ly = p[1], i = 1;
+  while (i < n) {
+    const w = W(i);
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);
+    while (i < n) {
+      const x = p[i * 3], y = p[i * 3 + 1];
+      if (i < n - 1) {
+        const mx = (x + p[i * 3 + 3]) / 2, my = (y + p[i * 3 + 4]) / 2;
+        ctx.quadraticCurveTo(x, y, mx, my);
+        lx = mx;
+        ly = my;
+      } else {
+        ctx.lineTo(x, y);
+        lx = x;
+        ly = y;
+      }
+      i++;
+      if (i < n && W(i) !== w) break;
+    }
+    ctx.stroke();
+  }
+}
+function dibujarCasilla(ctx, c, color) {
+  const h = c.s / 2, r = c.s * 0.16;
+  ctx.lineWidth = Math.max(1.4, c.s * 0.085);
+  ctx.strokeStyle = color;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(c.x - h, c.y - h, c.s, c.s, r);
+  else ctx.rect(c.x - h, c.y - h, c.s, c.s);
+  ctx.stroke();
+  if (c.ok) {
+    ctx.lineWidth = Math.max(2, c.s * 0.14);
+    ctx.beginPath();
+    ctx.moveTo(c.x - h * 0.55, c.y + h * 0.02);
+    ctx.lineTo(c.x - h * 0.12, c.y + h * 0.45);
+    ctx.lineTo(c.x + h * 0.62, c.y - h * 0.5);
+    ctx.stroke();
+  }
+}
+function pintarPapel(ctx, reglado, alto, y0, y1, oscuro) {
+  ctx.fillStyle = oscuro ? "#17140f" : "#fffdf6";
+  ctx.fillRect(0, 0, NOTA_W, alto);
+  if (reglado === "liso") return;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = oscuro ? "rgba(140,160,190,.18)" : "rgba(90,130,190,.22)";
+  ctx.beginPath();
+  if (reglado === "cuadros") {
+    const L = NOTA_R / 2;
+    for (let y = Math.max(0, Math.floor(y0 / L) * L); y <= Math.min(alto, y1); y += L) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(NOTA_W, y);
+    }
+    for (let x = 0; x <= NOTA_W; x += L) {
+      ctx.moveTo(x, Math.max(0, y0));
+      ctx.lineTo(x, Math.min(alto, y1));
+    }
+    ctx.stroke();
+    return;
+  }
+  const k0 = Math.max(0, Math.floor((y0 - NOTA_TOPE) / NOTA_R));
+  for (let k = k0; ; k++) {
+    const y = NOTA_TOPE + k * NOTA_R;
+    if (y > Math.min(alto, y1)) break;
+    ctx.moveTo(0, y);
+    ctx.lineTo(NOTA_W, y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = oscuro ? "rgba(255,110,110,.25)" : "rgba(220,70,70,.35)";
+  ctx.beginPath();
+  ctx.moveTo(NOTA_MARGEN, Math.max(0, y0));
+  ctx.lineTo(NOTA_MARGEN, Math.min(alto, y1));
+  ctx.stroke();
+}
+function NotaBtn({ activo, onClick, title, children, disabled }) {
+  return /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick,
+      title,
+      disabled,
+      style: { minWidth: 36 },
+      className: `h-9 px-2 rounded-lg flex items-center justify-center gap-1 text-xs font-medium shrink-0 transition-colors disabled:opacity-30 ${activo ? "bg-amber-500 text-neutral-950" : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"}`
+    },
+    children
+  );
+}
+function NotaLienzo({ nota, esMobile, api }) {
+  const ui0 = useMemo(() => notaUI(), []);
+  const [herr, setHerr] = useState(ui0.herr || "lapiz");
+  const [color, setColor] = useState(ui0.color || "azul");
+  const [gLapiz, setGLapiz] = useState(ui0.gLapiz != null ? ui0.gLapiz : 1);
+  const [gGoma, setGGoma] = useState(ui0.gGoma != null ? ui0.gGoma : 1);
+  const [lapizVisto, setLapizVisto] = useState(() => {
+    try {
+      return localStorage.getItem("jarvis:notas_lapiz") === "1";
+    } catch (_) {
+      return false;
+    }
+  });
+  const [dedoPref, setDedoPref] = useState(ui0.dedo);
+  const dedoDibuja = dedoPref != null ? dedoPref : !lapizVisto;
+  const [zoomUI, setZoomUI] = useState(ui0.zoom || 1);
+  const [tachar, setTachar] = useState(ui0.tachar !== false);
+  const [selN, setSelN] = useState(0);
+  const [hist, setHist] = useState({ u: 0, r: 0 });
+  const [altoCaja, setAltoCaja] = useState(500);
+  useEffect(
+    () => {
+      guardarNotaUI({ herr, color, gLapiz, gGoma, dedo: dedoPref, zoom: zoomUI, tachar });
+    },
+    [herr, color, gLapiz, gGoma, dedoPref, zoomUI, tachar]
+  );
+  const scrollRef = useRef(null), spacerRef = useRef(null), canvasRef = useRef(null), cajaRef = useRef(null);
+  const doc = useRef(null);
+  const guardadoRef = useRef(null);
+  const deshacer = useRef([]), rehacer = useRef([]);
+  const sel = useRef(null);
+  const transf = useRef(null);
+  const gesto = useRef(null);
+  const zoom = useRef(zoomUI);
+  const vista = useRef({ s: 1, ox: 0, cw: 0, ch: 0 });
+  const toques = useRef(/* @__PURE__ */ new Map());
+  const nav = useRef(null);
+  const inercia = useRef(0);
+  const ultimoPen = useRef(0);
+  const cursor = useRef(null);
+  const raf = useRef(0);
+  const oscuro = useRef(document.documentElement.classList.contains("dark"));
+  const cfg = useRef({});
+  cfg.current = { herr, color, gLapiz, gGoma, dedoDibuja, tachar };
+  function adoptar(n) {
+    doc.current = {
+      trazos: (n.trazos || []).slice(),
+      casillas: (n.casillas || []).slice(),
+      alto: n.alto || 0,
+      reglado: n.reglado || "lineas"
+    };
+    sel.current = null;
+    transf.current = null;
+    setSelN(0);
+  }
+  if (!doc.current) adoptar(nota);
+  useEffect(() => {
+    var _a;
+    if (nota === guardadoRef.current) return;
+    if (gesto.current) return;
+    const d = doc.current;
+    const soloEncabezado = d && nota.trazos === ((_a = guardadoRef.current) == null ? void 0 : _a.trazos);
+    if (soloEncabezado) {
+      d.reglado = nota.reglado || "lineas";
+    } else {
+      adoptar(nota);
+      deshacer.current = [];
+      rehacer.current = [];
+      setHist({ u: 0, r: 0 });
+    }
+    guardadoRef.current = nota;
+    ajustarTamano();
+    pedirPintar();
+  }, [nota]);
+  function guardar() {
+    const base = NotasStore.obtener(nota.id) || nota;
+    const d = doc.current;
+    const n = { ...base, trazos: d.trazos, casillas: d.casillas, alto: Math.round(d.alto) };
+    guardadoRef.current = n;
+    NotasStore.guardar(n);
+  }
+  function foto() {
+    const d = doc.current;
+    deshacer.current.push({ trazos: d.trazos.slice(), casillas: d.casillas.slice(), alto: d.alto });
+    if (deshacer.current.length > 150) deshacer.current.shift();
+    rehacer.current = [];
+    setHist({ u: deshacer.current.length, r: 0 });
+  }
+  function volver(desde, hacia) {
+    const f = desde.current.pop();
+    if (!f) return;
+    const d = doc.current;
+    hacia.current.push({ trazos: d.trazos.slice(), casillas: d.casillas.slice(), alto: d.alto });
+    d.trazos = f.trazos;
+    d.casillas = f.casillas;
+    d.alto = f.alto;
+    limpiarSel();
+    setHist({ u: deshacer.current.length, r: rehacer.current.length });
+    guardar();
+    ajustarTamano();
+    pedirPintar();
+  }
+  const undo = () => volver(deshacer, rehacer);
+  const redo = () => volver(rehacer, deshacer);
+  function altoEf() {
+    const v = vista.current;
+    return Math.max(doc.current.alto || 0, (v.ch || 600) / (v.s || 1) + NOTA_R * 3, 1500);
+  }
+  function calcVista() {
+    const sc = scrollRef.current;
+    const cw = sc.clientWidth, ch = sc.clientHeight;
+    const base = Math.max(240, Math.min(cw - (esMobile ? 0 : 32), 860));
+    const pageW = base * zoom.current;
+    const s = pageW / NOTA_W;
+    return { cw, ch, s, pageW, ox: Math.max(0, (cw - pageW) / 2) };
+  }
+  function ajustarTamano() {
+    const sc = scrollRef.current, sp = spacerRef.current;
+    if (!sc || !sp) return;
+    vista.current = calcVista();
+    const v = vista.current;
+    sp.style.width = Math.max(v.pageW, v.cw) + "px";
+    sp.style.height = Math.max(altoEf() * v.s + 24, v.ch) + "px";
+  }
+  function pedirPintar() {
+    if (raf.current) return;
+    raf.current = requestAnimationFrame(() => {
+      raf.current = 0;
+      pintar();
+    });
+  }
+  function pintar() {
+    const cv = canvasRef.current, sc = scrollRef.current;
+    if (!cv || !sc || !doc.current) return;
+    const v = vista.current;
+    const sl = sc.scrollLeft, st = sc.scrollTop;
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.round(v.cw * dpr), H = Math.round(v.ch * dpr);
+    if (cv.width !== W || cv.height !== H) {
+      cv.width = W;
+      cv.height = H;
+      cv.style.width = v.cw + "px";
+      cv.style.height = v.ch + "px";
+    }
+    const ctx = cv.getContext("2d");
+    const osc2 = oscuro.current, d = doc.current;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = osc2 ? "#0d0b07" : "#e9e3d3";
+    ctx.fillRect(0, 0, v.cw, v.ch);
+    ctx.setTransform(dpr * v.s, 0, 0, dpr * v.s, dpr * (v.ox - sl), -dpr * st);
+    const y0 = st / v.s - 10, y1 = (st + v.ch) / v.s + 10;
+    const alto = altoEf();
+    pintarPapel(ctx, d.reglado, alto, y0, y1, osc2);
+    const S = sel.current, T = transf.current;
+    const oculto = (x, conj) => S && T && conj.has(x);
+    for (const c of d.casillas) {
+      if (c.y + c.s < y0 || c.y - c.s > y1 || oculto(c, S ? S.casillas : null)) continue;
+      dibujarCasilla(ctx, c, notaTinta(c.c, osc2));
+    }
+    for (const t of d.trazos) {
+      const b = notaCaja(t);
+      if (b.y1 < y0 || b.y0 > y1 || oculto(t, S ? S.trazos : null)) continue;
+      dibujarTrazo(ctx, t, notaTinta(t.c, osc2));
+    }
+    if (S && T) {
+      ctx.save();
+      ctx.translate(T.ax + T.dx, T.ay + T.dy);
+      ctx.scale(T.k, T.k);
+      ctx.translate(-T.ax, -T.ay);
+      S.casillas.forEach((c) => dibujarCasilla(ctx, c, notaTinta(c.c, osc2)));
+      S.trazos.forEach((t) => dibujarTrazo(ctx, t, notaTinta(t.c, osc2)));
+      ctx.restore();
+    }
+    const g = gesto.current;
+    if (g && g.tipo === "trazo") dibujarTrazo(ctx, { c: g.c, w: g.w, p: g.p }, notaTinta(g.c, osc2));
+    if (g && g.tipo === "lazo" && g.p.length > 2) {
+      ctx.save();
+      ctx.lineWidth = 1.5 / v.s;
+      ctx.setLineDash([6 / v.s, 5 / v.s]);
+      ctx.strokeStyle = "#d97706";
+      ctx.fillStyle = "rgba(245,158,11,.08)";
+      ctx.beginPath();
+      ctx.moveTo(g.p[0], g.p[1]);
+      for (let i = 2; i < g.p.length; i += 2) ctx.lineTo(g.p[i], g.p[i + 1]);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    const B = cajaSel();
+    if (B) {
+      const hs = 7 / v.s;
+      ctx.save();
+      ctx.lineWidth = 1.5 / v.s;
+      ctx.setLineDash([6 / v.s, 4 / v.s]);
+      ctx.strokeStyle = "#d97706";
+      ctx.strokeRect(B.x0, B.y0, B.x1 - B.x0, B.y1 - B.y0);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#f59e0b";
+      ctx.strokeStyle = osc2 ? "#0d0b07" : "#ffffff";
+      [[B.x0, B.y0], [B.x1, B.y0], [B.x0, B.y1], [B.x1, B.y1]].forEach(([x, y]) => {
+        ctx.beginPath();
+        ctx.rect(x - hs, y - hs, hs * 2, hs * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+    const cu = cursor.current;
+    if (cu) {
+      ctx.save();
+      ctx.lineWidth = 1.2 / v.s;
+      ctx.strokeStyle = osc2 ? "rgba(255,255,255,.6)" : "rgba(0,0,0,.45)";
+      ctx.fillStyle = osc2 ? "rgba(255,255,255,.06)" : "rgba(0,0,0,.04)";
+      ctx.beginPath();
+      ctx.arc(cu.x, cu.y, cu.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+  function cajaSelCruda() {
+    const S = sel.current;
+    if (!S || !S.trazos.size && !S.casillas.size) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const sumar = (b) => {
+      if (b.x0 < x0) x0 = b.x0;
+      if (b.y0 < y0) y0 = b.y0;
+      if (b.x1 > x1) x1 = b.x1;
+      if (b.y1 > y1) y1 = b.y1;
+    };
+    S.trazos.forEach((t) => sumar(notaCaja(t)));
+    S.casillas.forEach((c) => sumar(casillaCaja(c)));
+    return { x0: x0 - 4, y0: y0 - 4, x1: x1 + 4, y1: y1 + 4 };
+  }
+  function cajaSel() {
+    const B = cajaSelCruda(), T = transf.current;
+    if (!B || !T) return B;
+    const f = (x, y) => [T.ax + (x - T.ax) * T.k + T.dx, T.ay + (y - T.ay) * T.k + T.dy];
+    const [a, b] = f(B.x0, B.y0), [c, e] = f(B.x1, B.y1);
+    return { x0: Math.min(a, c), y0: Math.min(b, e), x1: Math.max(a, c), y1: Math.max(b, e) };
+  }
+  function limpiarSel() {
+    sel.current = null;
+    transf.current = null;
+    setSelN(0);
+  }
+  function fijarSel(trazos, casillas) {
+    if (!trazos.size && !casillas.size) {
+      limpiarSel();
+      return;
+    }
+    sel.current = { trazos, casillas };
+    setSelN(trazos.size + casillas.size);
+  }
+  function aplicarTransf(T) {
+    const S = sel.current, d = doc.current;
+    if (!S || !T) return;
+    const f = (x, y) => [T.ax + (x - T.ax) * T.k + T.dx, T.ay + (y - T.ay) * T.k + T.dy];
+    foto();
+    const nuevosT = /* @__PURE__ */ new Set(), nuevosC = /* @__PURE__ */ new Set();
+    d.trazos = d.trazos.map((t) => {
+      if (!S.trazos.has(t)) return t;
+      const p = t.p.slice();
+      for (let i = 0; i < p.length; i += 3) {
+        const [x, y] = f(p[i], p[i + 1]);
+        p[i] = x;
+        p[i + 1] = y;
+      }
+      const n = { c: t.c, w: t.w * T.k, p };
+      nuevosT.add(n);
+      return n;
+    });
+    d.casillas = d.casillas.map((c) => {
+      if (!S.casillas.has(c)) return c;
+      const [x, y] = f(c.x, c.y);
+      const n = { ...c, x, y, s: c.s * T.k };
+      nuevosC.add(n);
+      return n;
+    });
+    transf.current = null;
+    fijarSel(nuevosT, nuevosC);
+    crecer(cajaSel());
+    guardar();
+    ajustarTamano();
+    pedirPintar();
+  }
+  function escalarSel(k) {
+    const B = cajaSelCruda();
+    if (!B) return;
+    aplicarTransf({ ax: (B.x0 + B.x1) / 2, ay: (B.y0 + B.y1) / 2, k, dx: 0, dy: 0 });
+  }
+  function colorSel(c) {
+    const S = sel.current, d = doc.current;
+    if (!S) return;
+    foto();
+    const nT = /* @__PURE__ */ new Set(), nC = /* @__PURE__ */ new Set();
+    d.trazos = d.trazos.map((t) => {
+      if (!S.trazos.has(t)) return t;
+      const n = { ...t, c };
+      nT.add(n);
+      return n;
+    });
+    d.casillas = d.casillas.map((x) => {
+      if (!S.casillas.has(x)) return x;
+      const n = { ...x, c };
+      nC.add(n);
+      return n;
+    });
+    fijarSel(nT, nC);
+    guardar();
+    pedirPintar();
+  }
+  function borrarSel() {
+    const S = sel.current, d = doc.current;
+    if (!S) return;
+    foto();
+    d.trazos = d.trazos.filter((t) => !S.trazos.has(t));
+    d.casillas = d.casillas.filter((c) => !S.casillas.has(c));
+    limpiarSel();
+    guardar();
+    pedirPintar();
+  }
+  function duplicarSel() {
+    const S = sel.current, d = doc.current;
+    if (!S) return;
+    foto();
+    const off = NOTA_R * 0.6;
+    const nT = /* @__PURE__ */ new Set(), nC = /* @__PURE__ */ new Set();
+    S.trazos.forEach((t) => {
+      const p = t.p.slice();
+      for (let i = 0; i < p.length; i += 3) {
+        p[i] += off;
+        p[i + 1] += off;
+      }
+      const n = { c: t.c, w: t.w, p };
+      d.trazos.push(n);
+      nT.add(n);
+    });
+    S.casillas.forEach((c) => {
+      const n = { ...c, x: c.x + off, y: c.y + off };
+      d.casillas.push(n);
+      nC.add(n);
+    });
+    fijarSel(nT, nC);
+    guardar();
+    pedirPintar();
+  }
+  function crecer(b) {
+    if (!b) return;
+    const d = doc.current, a = altoEf();
+    if (b.y1 > a - NOTA_R * 6) {
+      d.alto = b.y1 + NOTA_R * 20;
+      ajustarTamano();
+    }
+  }
+  function borrarTramo(ax, ay, bx, by, r) {
+    const d = doc.current;
+    const x0 = Math.min(ax, bx) - r, x1 = Math.max(ax, bx) + r, y0 = Math.min(ay, by) - r, y1 = Math.max(ay, by) + r;
+    let cambio = false;
+    const nuevos = [];
+    for (const t of d.trazos) {
+      const b = notaCaja(t);
+      if (b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1) {
+        nuevos.push(t);
+        continue;
+      }
+      const rr = r + t.w * 0.5;
+      const p = t.p.length > 3 ? remuestrear(t.p, Math.max(0.8, Math.min(rr * 0.4, 6))) : t.p;
+      const partes = [];
+      let run = [], toco = false;
+      for (let i = 0; i < p.length; i += 3) {
+        if (distSeg(p[i], p[i + 1], ax, ay, bx, by) < rr) {
+          toco = true;
+          if (run.length) partes.push(run);
+          run = [];
+        } else run.push(p[i], p[i + 1], p[i + 2]);
+      }
+      if (run.length) partes.push(run);
+      if (!toco) {
+        nuevos.push(t);
+        continue;
+      }
+      cambio = true;
+      partes.forEach((q) => {
+        if (q.length >= 6) nuevos.push({ c: t.c, w: t.w, p: simplificar(q, 0.25) });
+      });
+    }
+    const cas = d.casillas.filter((c) => distSeg(c.x, c.y, ax, ay, bx, by) >= r + c.s * 0.35);
+    if (cas.length !== d.casillas.length) cambio = true;
+    if (cambio) {
+      d.trazos = nuevos;
+      d.casillas = cas;
+    }
+    return cambio;
+  }
+  function aPagina(e) {
+    const r = canvasRef.current.getBoundingClientRect(), v = vista.current, sc = scrollRef.current;
+    return { x: (e.clientX - r.left - v.ox + sc.scrollLeft) / v.s, y: (e.clientY - r.top + sc.scrollTop) / v.s };
+  }
+  function presion(e) {
+    if (e.pointerType !== "pen") return NOTA_PR_SIN;
+    const p = e.pressure;
+    return p > 0 ? Math.min(1, p) : 0.5;
+  }
+  function casillaEn(x, y) {
+    const d = doc.current;
+    for (let i = d.casillas.length - 1; i >= 0; i--) {
+      const c = d.casillas[i], h = c.s / 2 + 6;
+      if (Math.abs(x - c.x) <= h && Math.abs(y - c.y) <= h) return c;
+    }
+    return null;
+  }
+  function tildar(c) {
+    const d = doc.current;
+    foto();
+    d.casillas = d.casillas.map((x) => x === c ? { ...x, ok: !x.ok } : x);
+    guardar();
+    pedirPintar();
+  }
+  function frenarInercia() {
+    if (inercia.current) cancelAnimationFrame(inercia.current);
+    inercia.current = 0;
+  }
+  function empezarNav() {
+    const pts = Array.from(toques.current.values());
+    const sc = scrollRef.current, r = canvasRef.current.getBoundingClientRect(), v = vista.current;
+    if (pts.length >= 2) {
+      const [a, b] = pts;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      nav.current = {
+        tipo: "pinch",
+        d0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        z0: zoom.current,
+        px: (mx - r.left - v.ox + sc.scrollLeft) / v.s,
+        py: (my - r.top + sc.scrollTop) / v.s
+      };
+    } else if (pts.length === 1) {
+      nav.current = { tipo: "pan", x: pts[0].x, y: pts[0].y, vx: 0, vy: 0, t: performance.now() };
+    } else nav.current = null;
+  }
+  function moverNav() {
+    const n = nav.current, sc = scrollRef.current;
+    if (!n) return;
+    const pts = Array.from(toques.current.values());
+    if (n.tipo === "pan" && pts.length === 1) {
+      const p = pts[0], now = performance.now(), dt = Math.max(1, now - n.t);
+      const dx = p.x - n.x, dy = p.y - n.y;
+      sc.scrollLeft -= dx;
+      sc.scrollTop -= dy;
+      n.vx = 0.7 * n.vx + 0.3 * (dx / dt);
+      n.vy = 0.7 * n.vy + 0.3 * (dy / dt);
+      n.x = p.x;
+      n.y = p.y;
+      n.t = now;
+    } else if (n.tipo === "pinch" && pts.length >= 2) {
+      const [a, b] = pts;
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      zoom.current = Math.max(NOTA_ZMIN, Math.min(NOTA_ZMAX, n.z0 * d / n.d0));
+      ajustarTamano();
+      const r = canvasRef.current.getBoundingClientRect(), v = vista.current;
+      sc.scrollLeft = n.px * v.s + v.ox - (mx - r.left);
+      sc.scrollTop = n.py * v.s - (my - r.top);
+      pintar();
+    }
+  }
+  function terminarNav() {
+    const n = nav.current;
+    if (n && n.tipo === "pinch") setZoomUI(Math.round(zoom.current * 100) / 100);
+    if (n && n.tipo === "pan" && (Math.abs(n.vx) > 0.05 || Math.abs(n.vy) > 0.05)) {
+      let vx = n.vx, vy = n.vy, t = performance.now();
+      const sc = scrollRef.current;
+      const paso = (now) => {
+        const dt = now - t;
+        t = now;
+        sc.scrollLeft -= vx * dt;
+        sc.scrollTop -= vy * dt;
+        const f = Math.pow(0.94, dt / 16);
+        vx *= f;
+        vy *= f;
+        if (Math.abs(vx) > 0.02 || Math.abs(vy) > 0.02) inercia.current = requestAnimationFrame(paso);
+        else inercia.current = 0;
+      };
+      inercia.current = requestAnimationFrame(paso);
+    }
+    nav.current = null;
+  }
+  function onDown(e) {
+    window.__jarvisUltimoToque = Date.now();
+    frenarInercia();
+    const cv = canvasRef.current;
+    const C = cfg.current;
+    if (e.pointerType === "pen") {
+      ultimoPen.current = Date.now();
+      if (!lapizVisto) {
+        setLapizVisto(true);
+        try {
+          localStorage.setItem("jarvis:notas_lapiz", "1");
+        } catch (_) {
+        }
+      }
+    }
+    if (e.pointerType === "touch") {
+      const g = gesto.current;
+      if (g && g.pen || Date.now() - ultimoPen.current < 400) return;
+      if (e.width > 60 && e.height > 60) return;
+      toques.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try {
+        cv.setPointerCapture(e.pointerId);
+      } catch (_) {
+      }
+      if (!C.dedoDibuja || toques.current.size >= 2) {
+        if (gesto.current && !gesto.current.pen) {
+          gesto.current = null;
+          transf.current = null;
+          cursor.current = null;
+          pedirPintar();
+        }
+        empezarNav();
+        return;
+      }
+    } else if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (gesto.current) return;
+    e.preventDefault();
+    {
+      const a = document.activeElement;
+      if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) a.blur();
+    }
+    try {
+      cv.setPointerCapture(e.pointerId);
+    } catch (_) {
+    }
+    const pt = aPagina(e);
+    const pen = e.pointerType === "pen";
+    const h = e.buttons & 32 || e.button === 5 ? "goma" : C.herr;
+    if (h === "lapiz" || h === "casilla") {
+      const c = casillaEn(pt.x, pt.y);
+      if (c) {
+        tildar(c);
+        gesto.current = { tipo: "nada", id: e.pointerId, pen };
+        return;
+      }
+    }
+    if (h === "casilla") {
+      const s = NOTA_R * 0.6;
+      let y = pt.y;
+      if (doc.current.reglado === "lineas" && y > NOTA_TOPE - NOTA_R) {
+        const k = Math.round((y - NOTA_TOPE + NOTA_R / 2) / NOTA_R);
+        y = NOTA_TOPE + k * NOTA_R - NOTA_R / 2;
+      }
+      foto();
+      doc.current.casillas = doc.current.casillas.concat([{ x: pt.x, y, s, ok: false, c: C.color }]);
+      guardar();
+      crecer({ y1: y });
+      pedirPintar();
+      gesto.current = { tipo: "nada", id: e.pointerId, pen };
+      setHerr("lapiz");
+      return;
+    }
+    if (h === "lazo") {
+      const B = cajaSel();
+      if (B) {
+        const v = vista.current, hs = 16 / v.s;
+        const esq = [[B.x0, B.y0, B.x1, B.y1], [B.x1, B.y0, B.x0, B.y1], [B.x0, B.y1, B.x1, B.y0], [B.x1, B.y1, B.x0, B.y0]];
+        for (const [x, y, ax, ay] of esq) {
+          if (Math.abs(pt.x - x) < hs && Math.abs(pt.y - y) < hs) {
+            gesto.current = { tipo: "escalar", id: e.pointerId, pen, ax, ay, d0: Math.hypot(x - ax, y - ay) || 1 };
+            transf.current = { ax, ay, k: 1, dx: 0, dy: 0 };
+            return;
+          }
+        }
+        if (pt.x >= B.x0 && pt.x <= B.x1 && pt.y >= B.y0 && pt.y <= B.y1) {
+          gesto.current = { tipo: "mover", id: e.pointerId, pen, x: pt.x, y: pt.y };
+          transf.current = { ax: 0, ay: 0, k: 1, dx: 0, dy: 0 };
+          return;
+        }
+      }
+      limpiarSel();
+      gesto.current = { tipo: "lazo", id: e.pointerId, pen, p: [pt.x, pt.y] };
+      pedirPintar();
+      return;
+    }
+    if (sel.current) limpiarSel();
+    if (h === "goma") {
+      const r = NOTA_GOMA[C.gGoma] || 18;
+      foto();
+      const hubo = borrarTramo(pt.x, pt.y, pt.x, pt.y, r);
+      gesto.current = { tipo: "goma", id: e.pointerId, pen, x: pt.x, y: pt.y, r, hubo };
+      cursor.current = { x: pt.x, y: pt.y, r };
+      pedirPintar();
+      return;
+    }
+    const pr = presion(e);
+    gesto.current = { tipo: "trazo", id: e.pointerId, pen, c: C.color, w: NOTA_LAPIZ[C.gLapiz] || 2.6, p: [pt.x, pt.y, pr], prS: pr };
+    pedirPintar();
+  }
+  function onMove(e) {
+    if (e.pointerType === "touch" && toques.current.has(e.pointerId)) {
+      toques.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (nav.current) {
+        moverNav();
+        return;
+      }
+    }
+    const g = gesto.current;
+    if (!g && cfg.current.herr === "goma" && e.pointerType !== "touch") {
+      const pt = aPagina(e);
+      cursor.current = { x: pt.x, y: pt.y, r: NOTA_GOMA[cfg.current.gGoma] || 18 };
+      pedirPintar();
+      return;
+    }
+    if (!g || g.id !== e.pointerId) return;
+    window.__jarvisUltimoToque = Date.now();
+    if (g.pen) ultimoPen.current = Date.now();
+    const evs = e.getCoalescedEvents && e.getCoalescedEvents() || [];
+    const lista = evs.length ? evs : [e];
+    if (g.tipo === "trazo") {
+      const v = vista.current, minD = 0.6 / v.s;
+      for (const ev of lista) {
+        const pt = aPagina(ev);
+        const n = g.p.length;
+        if (Math.hypot(pt.x - g.p[n - 3], pt.y - g.p[n - 2]) < minD) continue;
+        g.prS = 0.65 * g.prS + 0.35 * presion(ev);
+        g.p.push(pt.x, pt.y, g.prS);
+      }
+      pedirPintar();
+    } else if (g.tipo === "goma") {
+      for (const ev of lista) {
+        const pt = aPagina(ev);
+        if (borrarTramo(g.x, g.y, pt.x, pt.y, g.r)) g.hubo = true;
+        g.x = pt.x;
+        g.y = pt.y;
+      }
+      cursor.current = { x: g.x, y: g.y, r: g.r };
+      pedirPintar();
+    } else if (g.tipo === "lazo") {
+      const pt = aPagina(e);
+      g.p.push(pt.x, pt.y);
+      pedirPintar();
+    } else if (g.tipo === "mover") {
+      const pt = aPagina(e);
+      transf.current = { ax: 0, ay: 0, k: 1, dx: pt.x - g.x, dy: pt.y - g.y };
+      pedirPintar();
+    } else if (g.tipo === "escalar") {
+      const pt = aPagina(e);
+      const k = Math.max(0.15, Math.min(8, Math.hypot(pt.x - g.ax, pt.y - g.ay) / g.d0));
+      transf.current = { ax: g.ax, ay: g.ay, k, dx: 0, dy: 0 };
+      pedirPintar();
+    }
+  }
+  function onUp(e) {
+    if (toques.current.has(e.pointerId)) {
+      toques.current.delete(e.pointerId);
+      if (nav.current) {
+        if (toques.current.size === 0) terminarNav();
+        else empezarNav();
+        return;
+      }
+    }
+    const g = gesto.current;
+    if (!g || g.id !== e.pointerId) return;
+    gesto.current = null;
+    const cancelado = e.type === "pointercancel";
+    if (g.pen) ultimoPen.current = Date.now();
+    if (g.tipo === "trazo") {
+      if (cancelado) {
+        pedirPintar();
+        return;
+      }
+      const d = doc.current;
+      const p = simplificar(g.p, 0.35);
+      if (cfg.current.tachar && esTachon(g.p)) {
+        const t = { c: g.c, w: g.w, p: g.p }, B = notaCaja(t);
+        const dentro = (x, y) => x >= B.x0 && x <= B.x1 && y >= B.y0 && y <= B.y1;
+        const tapados = d.trazos.filter((s) => {
+          const b = notaCaja(s);
+          if (b.x1 < B.x0 || b.x0 > B.x1 || b.y1 < B.y0 || b.y0 > B.y1) return false;
+          let n = 0, k = 0;
+          const paso = Math.max(3, Math.floor(s.p.length / 3 / 24)) * 3;
+          for (let i = 0; i < s.p.length; i += paso) {
+            k++;
+            if (dentro(s.p[i], s.p[i + 1])) n++;
+          }
+          return n / k >= 0.5;
+        });
+        const casT = d.casillas.filter((c) => dentro(c.x, c.y));
+        if (tapados.length || casT.length) {
+          foto();
+          const a = new Set(tapados), b = new Set(casT);
+          d.trazos = d.trazos.filter((s) => !a.has(s));
+          d.casillas = d.casillas.filter((c) => !b.has(c));
+          guardar();
+          pedirPintar();
+          return;
+        }
+      }
+      foto();
+      const nuevo = { c: g.c, w: g.w, p };
+      d.trazos = d.trazos.concat([nuevo]);
+      crecer(notaCaja(nuevo));
+      guardar();
+      pedirPintar();
+    } else if (g.tipo === "goma") {
+      cursor.current = e.pointerType === "touch" ? null : cursor.current;
+      if (g.hubo) guardar();
+      else {
+        deshacer.current.pop();
+        setHist({ u: deshacer.current.length, r: rehacer.current.length });
+      }
+      pedirPintar();
+    } else if (g.tipo === "lazo") {
+      const d = doc.current, poly = g.p;
+      if (poly.length >= 6) {
+        const T = /* @__PURE__ */ new Set(), C = /* @__PURE__ */ new Set();
+        d.trazos.forEach((t) => {
+          const n = t.p.length / 3, paso = Math.max(1, Math.floor(n / 30));
+          let k = 0, dentro = 0;
+          for (let i = 0; i < n; i += paso) {
+            k++;
+            if (enPoligono(t.p[i * 3], t.p[i * 3 + 1], poly)) dentro++;
+          }
+          if (k && dentro / k >= 0.6) T.add(t);
+        });
+        d.casillas.forEach((c) => {
+          if (enPoligono(c.x, c.y, poly)) C.add(c);
+        });
+        fijarSel(T, C);
+        if (!T.size && !C.size) limpiarSel();
+      }
+      pedirPintar();
+    } else if (g.tipo === "mover" || g.tipo === "escalar") {
+      const T = transf.current;
+      const quieto = !T || T.k === 1 && Math.abs(T.dx) < 0.5 && Math.abs(T.dy) < 0.5;
+      if (cancelado || quieto) {
+        transf.current = null;
+        pedirPintar();
+      } else aplicarTransf(T);
+    }
+  }
+  function onLeave(e) {
+    if (!gesto.current && e.pointerType !== "touch") {
+      cursor.current = null;
+      pedirPintar();
+    }
+  }
+  useEffect(() => {
+    const sc = scrollRef.current;
+    const medir = () => {
+      const r = cajaRef.current ? cajaRef.current.getBoundingClientRect() : null;
+      if (!r) return;
+      setAltoCaja(Math.max(340, Math.round(window.innerHeight - r.top - (esMobile ? 8 : 16))));
+    };
+    medir();
+    const ro = new ResizeObserver(() => {
+      ajustarTamano();
+      pintar();
+    });
+    ro.observe(sc);
+    window.addEventListener("resize", medir);
+    const mo = new MutationObserver(() => {
+      oscuro.current = document.documentElement.classList.contains("dark");
+      pedirPintar();
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    const tecla = (e) => {
+      const a = document.activeElement;
+      if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        e.shiftKey ? redo() : undo();
+      } else if (mod && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      } else if ((e.key === "Delete" || e.key === "Backspace") && sel.current) {
+        e.preventDefault();
+        borrarSel();
+      } else if (e.key === "Escape" && sel.current) {
+        limpiarSel();
+        pedirPintar();
+      }
+    };
+    window.addEventListener("keydown", tecla);
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener("resize", medir);
+      window.removeEventListener("keydown", tecla);
+      frenarInercia();
+      if (raf.current) cancelAnimationFrame(raf.current);
+    };
+  }, []);
+  function cambiarZoom(z) {
+    z = Math.max(NOTA_ZMIN, Math.min(NOTA_ZMAX, Math.round(z * 100) / 100));
+    const sc = scrollRef.current, v = vista.current;
+    const cx = (v.cw / 2 - v.ox + sc.scrollLeft) / v.s, cy = (v.ch / 2 + sc.scrollTop) / v.s;
+    zoom.current = z;
+    ajustarTamano();
+    const w = vista.current;
+    sc.scrollLeft = cx * w.s + w.ox - w.cw / 2;
+    sc.scrollTop = cy * w.s - w.ch / 2;
+    setZoomUI(z);
+    pintar();
+  }
+  useEffect(() => {
+    if (herr !== "goma") {
+      cursor.current = null;
+    }
+    if (herr !== "lazo" && sel.current) limpiarSel();
+    pedirPintar();
+  }, [herr]);
+  function descargarPNG() {
+    const d = doc.current;
+    let bajo = NOTA_TOPE + NOTA_R * 2;
+    d.trazos.forEach((t) => {
+      bajo = Math.max(bajo, notaCaja(t).y1);
+    });
+    d.casillas.forEach((c) => {
+      bajo = Math.max(bajo, c.y + c.s);
+    });
+    const esc = 1.6, H = Math.min(Math.ceil((bajo + NOTA_R * 2) * esc), 16e3);
+    const cv = document.createElement("canvas");
+    cv.width = NOTA_W * esc;
+    cv.height = H;
+    const ctx = cv.getContext("2d");
+    ctx.scale(esc, esc);
+    pintarPapel(ctx, d.reglado, H / esc, 0, H / esc, false);
+    d.casillas.forEach((c) => dibujarCasilla(ctx, c, notaTinta(c.c, false)));
+    d.trazos.forEach((t) => dibujarTrazo(ctx, t, notaTinta(t.c, false)));
+    cv.toBlob((b) => {
+      if (!b) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(b);
+      a.download = (nota.titulo || "nota").replace(/[\\/:*?"<>|]+/g, "_") + ".png";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4e3);
+    }, "image/png");
+  }
+  if (api) api.current = { descargar: descargarPNG };
+  const sep = /* @__PURE__ */ React.createElement("div", { className: "w-px h-6 bg-neutral-200 dark:bg-neutral-800 shrink-0 mx-0.5" });
+  const osc = oscuro.current;
+  const grosores = herr === "goma" ? NOTA_GOMA : NOTA_LAPIZ;
+  const gAct = herr === "goma" ? gGoma : gLapiz;
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: `flex items-center gap-1 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-1.5 py-1 ${esMobile ? "overflow-x-auto" : "flex-wrap"}` }, /* @__PURE__ */ React.createElement(NotaBtn, { onClick: undo, disabled: !hist.u, title: "Deshacer (Ctrl+Z)" }, /* @__PURE__ */ React.createElement(Undo2, { size: 17 })), /* @__PURE__ */ React.createElement(NotaBtn, { onClick: redo, disabled: !hist.r, title: "Rehacer (Ctrl+Y)" }, /* @__PURE__ */ React.createElement(Redo2, { size: 17 })), sep, /* @__PURE__ */ React.createElement(NotaBtn, { activo: herr === "lapiz", onClick: () => setHerr("lapiz"), title: "L\xE1piz" }, /* @__PURE__ */ React.createElement(PenLine, { size: 17 })), /* @__PURE__ */ React.createElement(NotaBtn, { activo: herr === "goma", onClick: () => setHerr("goma"), title: "Goma" }, /* @__PURE__ */ React.createElement(Eraser, { size: 17 })), /* @__PURE__ */ React.createElement(NotaBtn, { activo: herr === "lazo", onClick: () => setHerr("lazo"), title: "Seleccionar (lazo): rode\xE1 lo escrito para moverlo, agrandarlo o achicarlo" }, /* @__PURE__ */ React.createElement(Lasso, { size: 17 })), /* @__PURE__ */ React.createElement(NotaBtn, { activo: herr === "casilla", onClick: () => setHerr("casilla"), title: "Casilla de checklist: toc\xE1 donde va" }, /* @__PURE__ */ React.createElement(SquareCheck, { size: 17 })), sep, NOTA_TINTAS.map((t) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: t.k,
+      title: t.nombre,
+      onClick: () => {
+        setColor(t.k);
+        if (herr !== "lapiz" && herr !== "casilla") setHerr("lapiz");
+      },
+      className: `w-8 h-8 rounded-full shrink-0 flex items-center justify-center ${color === t.k && herr !== "goma" && herr !== "lazo" ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-neutral-950" : ""}`
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "w-5 h-5 rounded-full block", style: { background: osc ? t.oscuro : t.claro } })
+  )), sep, grosores.map((g, i) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: i,
+      title: (herr === "goma" ? "Goma " : "L\xE1piz ") + ["fina", "mediana", "gruesa", "extra"][i],
+      onClick: () => herr === "goma" ? setGGoma(i) : setGLapiz(i),
+      className: `w-8 h-8 rounded-lg shrink-0 flex items-center justify-center ${gAct === i ? "bg-neutral-200 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-900"}`
+    },
+    /* @__PURE__ */ React.createElement(
+      "span",
+      {
+        className: "rounded-full block",
+        style: herr === "goma" ? { width: 6 + i * 5, height: 6 + i * 5, border: "1.5px solid currentColor", color: osc ? "#bbb" : "#555" } : { width: 3 + i * 3, height: 3 + i * 3, background: notaTinta(color, osc) }
+      }
+    )
+  )), sep, /* @__PURE__ */ React.createElement(
+    NotaBtn,
+    {
+      activo: dedoDibuja,
+      onClick: () => setDedoPref(!dedoDibuja),
+      title: dedoDibuja ? "El dedo escribe (dos dedos para mover). Toc\xE1 para que el dedo s\xF3lo mueva la hoja." : "El dedo mueve la hoja y s\xF3lo escribe el l\xE1piz. Toc\xE1 para escribir con el dedo."
+    },
+    /* @__PURE__ */ React.createElement(Hand, { size: 17 }),
+    /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, dedoDibuja ? "Dedo escribe" : "Dedo mueve")
+  ), /* @__PURE__ */ React.createElement(NotaBtn, { activo: tachar, onClick: () => setTachar(!tachar), title: tachar ? "Borrar tachando: activado (un zigzag encima borra lo escrito)" : "Borrar tachando: desactivado" }, /* @__PURE__ */ React.createElement("span", { className: "text-[13px] leading-none font-bold", style: { fontFamily: "serif" } }, "\u224B")), sep, /* @__PURE__ */ React.createElement(NotaBtn, { onClick: () => cambiarZoom(zoom.current / 1.25), title: "Alejar" }, /* @__PURE__ */ React.createElement(ZoomOut, { size: 17 })), /* @__PURE__ */ React.createElement("button", { onClick: () => cambiarZoom(1), title: "Tama\xF1o normal", className: "text-[11px] tabular-nums w-10 shrink-0 text-neutral-500 hover:text-amber-600" }, Math.round(zoomUI * 100), "%"), /* @__PURE__ */ React.createElement(NotaBtn, { onClick: () => cambiarZoom(zoom.current * 1.25), title: "Acercar" }, /* @__PURE__ */ React.createElement(ZoomIn, { size: 17 }))), /* @__PURE__ */ React.createElement("div", { ref: cajaRef, className: "relative" }, /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      ref: scrollRef,
+      onScroll: () => pedirPintar(),
+      className: "relative overflow-auto rounded-xl border border-neutral-200 dark:border-neutral-800",
+      style: { height: altoCaja, overscrollBehavior: "contain" }
+    },
+    /* @__PURE__ */ React.createElement("div", { ref: spacerRef, style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
+      "canvas",
+      {
+        ref: canvasRef,
+        onPointerDown: onDown,
+        onPointerMove: onMove,
+        onPointerUp: onUp,
+        onPointerCancel: onUp,
+        onPointerLeave: onLeave,
+        onContextMenu: (e) => e.preventDefault(),
+        style: {
+          position: "sticky",
+          top: 0,
+          left: 0,
+          display: "block",
+          touchAction: "none",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
+          cursor: herr === "goma" ? "none" : herr === "lazo" ? "crosshair" : herr === "casilla" ? "copy" : "crosshair"
+        }
+      }
+    ))
+  ), selN > 0 && /* @__PURE__ */ React.createElement("div", { className: "absolute left-1/2 -translate-x-1/2 bottom-3 z-10 flex items-center gap-1 rounded-xl border border-amber-400 bg-white dark:bg-neutral-950 shadow-xl px-1.5 py-1 max-w-[calc(100%-16px)] overflow-x-auto no-scrollbar" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500 px-1.5 shrink-0" }, selN, " sel."), /* @__PURE__ */ React.createElement(NotaBtn, { onClick: () => escalarSel(0.8), title: "Achicar" }, /* @__PURE__ */ React.createElement(Minimize2, { size: 16 }), /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "Achicar")), /* @__PURE__ */ React.createElement(NotaBtn, { onClick: () => escalarSel(1.25), title: "Agrandar" }, /* @__PURE__ */ React.createElement(Maximize2, { size: 16 }), /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "Agrandar")), NOTA_TINTAS.map((t) => /* @__PURE__ */ React.createElement("button", { key: t.k, title: "Pasar a " + t.nombre, onClick: () => colorSel(t.k), className: "w-7 h-7 rounded-full shrink-0 flex items-center justify-center" }, /* @__PURE__ */ React.createElement("span", { className: "w-4 h-4 rounded-full block", style: { background: osc ? t.oscuro : t.claro } }))), /* @__PURE__ */ React.createElement(NotaBtn, { onClick: duplicarSel, title: "Duplicar" }, /* @__PURE__ */ React.createElement(Copy, { size: 16 })), /* @__PURE__ */ React.createElement(NotaBtn, { onClick: borrarSel, title: "Borrar lo seleccionado (Supr)" }, /* @__PURE__ */ React.createElement(Trash2, { size: 16 })), /* @__PURE__ */ React.createElement(NotaBtn, { onClick: () => {
+    limpiarSel();
+    pedirPintar();
+  }, title: "Soltar la selecci\xF3n (Esc)" }, /* @__PURE__ */ React.createElement(X, { size: 16 })))));
+}
+function Notas() {
+  const esMobile = useEsMobile();
+  const [, setVer] = useState(0);
+  const [tipos, setTipos] = useState([]);
+  const [filtro, setFiltro] = useState(() => notaUI().filtro || "todas");
+  const [abierta, setAbierta] = useState(() => esMobileInicial() ? null : notaUI().abierta || null);
+  const [busca, setBusca] = useState("");
+  const [gestionTipos, setGestionTipos] = useState(false);
+  const [nuevoTipo, setNuevoTipo] = useState("");
+  const [confirmarBorrar, setConfirmarBorrar] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [cargada, setCargada] = useState(false);
+  const lienzoApi = useRef(null);
+  function esMobileInicial() {
+    try {
+      return window.matchMedia("(max-width: 767px)").matches;
+    } catch (_) {
+      return false;
+    }
+  }
+  useEffect(() => {
+    const off = NotasStore.suscribir(() => setVer((v) => v + 1));
+    NotasStore.iniciar().then(() => setCargada(true));
+    loadState("martin:notas_tipos", []).then((t) => setTipos(Array.isArray(t) ? t : []));
+    return off;
+  }, []);
+  useEffect(() => {
+    guardarNotaUI({ filtro, abierta });
+  }, [filtro, abierta]);
+  useEffect(() => {
+    setConfirmarBorrar(false);
+    setMenu(false);
+  }, [abierta]);
+  const persistTipos = (t) => {
+    setTipos(t);
+    saveState("martin:notas_tipos", t);
+  };
+  const nombreTipo = (id) => (tipos.find((t) => t.id === id) || {}).nombre || "";
+  const tipoValido = (id) => !!id && tipos.some((t) => t.id === id);
+  const todas = NotasStore.lista();
+  const q = busca.trim().toLowerCase();
+  const visibles = todas.filter((n) => {
+    if (filtro === "sin" && tipoValido(n.tipo)) return false;
+    if (filtro !== "todas" && filtro !== "sin" && n.tipo !== filtro) return false;
+    if (q && !(n.titulo || "").toLowerCase().includes(q) && !nombreTipo(n.tipo).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const grupos = (() => {
+    if (filtro !== "todas") return [{ id: filtro, nombre: filtro === "sin" ? "Sin tipo" : nombreTipo(filtro), notas: visibles }];
+    const g = tipos.map((t) => ({ id: t.id, nombre: t.nombre, notas: visibles.filter((n) => n.tipo === t.id) }));
+    g.push({ id: "sin", nombre: "Sin tipo", notas: visibles.filter((n) => !tipoValido(n.tipo)) });
+    return g.filter((x) => x.notas.length);
+  })();
+  const cuenta = (id) => todas.filter((n) => id === "sin" ? !tipoValido(n.tipo) : n.tipo === id).length;
+  const nota = abierta ? NotasStore.obtener(abierta) : null;
+  useEffect(() => {
+    if (cargada && abierta && !nota) setAbierta(null);
+  }, [cargada, abierta, nota]);
+  function nueva() {
+    const hoy = /* @__PURE__ */ new Date();
+    const n = NotasStore.crear({
+      titulo: "Nota del " + hoy.getDate() + "/" + (hoy.getMonth() + 1),
+      tipo: filtro !== "todas" && filtro !== "sin" ? filtro : ""
+    });
+    setAbierta(n.id);
+  }
+  function editar(campos) {
+    const n = NotasStore.obtener(abierta);
+    if (n) NotasStore.guardar({ ...n, ...campos });
+  }
+  function duplicar() {
+    const n = NotasStore.obtener(abierta);
+    if (!n) return;
+    const c = NotasStore.crear({
+      ...n,
+      id: void 0,
+      titulo: (n.titulo || "Nota") + " (copia)",
+      creada: Date.now(),
+      trazos: n.trazos.map((t) => ({ c: t.c, w: t.w, p: t.p.slice() })),
+      casillas: n.casillas.map((x) => ({ ...x }))
+    });
+    setAbierta(c.id);
+  }
+  function agregarTipo() {
+    const nom = nuevoTipo.trim();
+    if (!nom) return;
+    persistTipos(tipos.concat([{ id: "t" + Date.now().toString(36), nombre: nom }]));
+    setNuevoTipo("");
+  }
+  const fmt = (t) => {
+    if (!t) return "";
+    const d = new Date(t), hoy = /* @__PURE__ */ new Date();
+    if (d.toDateString() === hoy.toDateString()) return "hoy " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    return d.getDate() + "/" + (d.getMonth() + 1) + (d.getFullYear() !== hoy.getFullYear() ? "/" + d.getFullYear() : "");
+  };
+  const nb = NotasStore.nube();
+  const nubeTxt = { ok: "\u2601 Al d\xEDa", subiendo: "\u2601 Guardando\u2026", local: "S\xF3lo en este aparato", permiso: "\u26A0 S\xF3lo en este aparato", error: "\u26A0 Sin sincronizar" }[nb.fase] || "";
+  const chip = (id, label) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: id,
+      onClick: () => setFiltro(id),
+      className: `px-2.5 py-1 rounded-full text-xs font-medium border shrink-0 ${filtro === id ? "bg-amber-500 border-amber-500 text-neutral-950" : "border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400 hover:border-amber-400"}`
+    },
+    label
+  );
+  const panelLista = /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: nueva, className: "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-neutral-950 text-sm font-medium" }, /* @__PURE__ */ React.createElement(Plus, { size: 16 }), " Nueva nota"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setGestionTipos(!gestionTipos),
+      title: "Tipos de nota",
+      className: `p-2 rounded-lg border ${gestionTipos ? "border-amber-500 text-amber-600" : "border-neutral-200 dark:border-neutral-800 text-neutral-500"}`
+    },
+    /* @__PURE__ */ React.createElement(Tags, { size: 16 })
+  )), /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement(Search, { size: 14, className: "absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" }), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: busca,
+      onChange: (e) => setBusca(e.target.value),
+      placeholder: "Buscar por t\xEDtulo o tipo",
+      className: "w-full pl-8 pr-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-transparent text-sm outline-none focus:border-amber-500"
+    }
+  )), gestionTipos && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-amber-300 dark:border-amber-800 p-2.5 space-y-2 bg-amber-50/50 dark:bg-amber-950/20" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, "Tipos de nota"), tipos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500" }, "Todav\xEDa no hay tipos. Cre\xE1 el primero (p. ej. Clientes, Facultad, Ideas)."), tipos.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      defaultValue: t.nombre,
+      onBlur: (e) => {
+        const v = e.target.value.trim();
+        if (v && v !== t.nombre) persistTipos(tipos.map((x) => x.id === t.id ? { ...x, nombre: v } : x));
+      },
+      className: "flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
+    }
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-400 w-6 text-right" }, cuenta(t.id)), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        persistTipos(tipos.filter((x) => x.id !== t.id));
+        if (filtro === t.id) setFiltro("todas");
+      },
+      title: "Borrar el tipo (las notas pasan a \u201CSin tipo\u201D, no se borran)",
+      className: "p-1 text-neutral-400 hover:text-red-500"
+    },
+    /* @__PURE__ */ React.createElement(Trash2, { size: 14 })
+  ))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: nuevoTipo,
+      onChange: (e) => setNuevoTipo(e.target.value),
+      onKeyDown: (e) => e.key === "Enter" && agregarTipo(),
+      placeholder: "Nuevo tipo\u2026",
+      className: "flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
+    }
+  ), /* @__PURE__ */ React.createElement("button", { onClick: agregarTipo, className: "px-2 py-1 rounded bg-amber-500 text-neutral-950 text-xs font-medium" }, "Agregar"))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, chip("todas", "Todas"), tipos.map((t) => chip(t.id, t.nombre)), chip("sin", "Sin tipo")), /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, !cargada && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400" }, "Abriendo el anotador\u2026"), cargada && todas.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 p-4 text-center" }, "Todav\xEDa no hay notas. Toc\xE1 ", /* @__PURE__ */ React.createElement("b", null, "Nueva nota"), " y escrib\xED con el l\xE1piz."), cargada && todas.length > 0 && grupos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400" }, "Nada coincide con el filtro."), grupos.map((g) => /* @__PURE__ */ React.createElement("div", { key: g.id }, filtro === "todas" && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-neutral-400 font-medium mb-1 px-1" }, g.nombre, " \xB7 ", g.notas.length), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, g.notas.map((n) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: n.id,
+      onClick: () => setAbierta(n.id),
+      className: `w-full text-left px-2.5 py-2 rounded-lg border transition-colors ${abierta === n.id ? "border-amber-500 bg-amber-50 dark:bg-amber-950/30" : "border-neutral-200 dark:border-neutral-800 hover:border-amber-400"}`
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium truncate" }, n.titulo || "Sin t\xEDtulo"),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-[11px] text-neutral-500 mt-0.5" }, tipoValido(n.tipo) && filtro === "todas" ? null : tipoValido(n.tipo) ? /* @__PURE__ */ React.createElement("span", { className: "truncate" }, nombreTipo(n.tipo)) : null, /* @__PURE__ */ React.createElement("span", null, fmt(n.t)), n.casillas && n.casillas.length > 0 && /* @__PURE__ */ React.createElement("span", null, "\u2611 ", n.casillas.filter((c) => c.ok).length, "/", n.casillas.length))
+  )))))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-400 px-1", title: nb.detalle }, nubeTxt, nb.fase === "permiso" || nb.fase === "error" ? " \u2014 " + nb.detalle : ""));
+  const encabezado = nota && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, esMobile && /* @__PURE__ */ React.createElement("button", { onClick: () => setAbierta(null), className: "p-2 -ml-1 rounded-lg text-neutral-500 hover:text-amber-600", title: "Volver a la lista" }, /* @__PURE__ */ React.createElement(ArrowLeft, { size: 18 })), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      key: nota.id + "-t",
+      defaultValue: nota.titulo,
+      onBlur: (e) => {
+        if (e.target.value !== nota.titulo) editar({ titulo: e.target.value });
+      },
+      onKeyDown: (e) => e.key === "Enter" && e.target.blur(),
+      placeholder: "T\xEDtulo",
+      className: "flex-1 min-w-[140px] font-serif text-xl bg-transparent outline-none border-b border-transparent focus:border-amber-500 py-0.5"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: tipoValido(nota.tipo) ? nota.tipo : "",
+      onChange: (e) => editar({ tipo: e.target.value }),
+      className: "px-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm",
+      title: "Tipo de nota"
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin tipo"),
+    tipos.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.nombre))
+  ), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: nota.reglado || "lineas",
+      onChange: (e) => editar({ reglado: e.target.value }),
+      className: "px-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm",
+      title: "Hoja"
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "lineas" }, "Rayada"),
+    /* @__PURE__ */ React.createElement("option", { value: "cuadros" }, "Cuadriculada"),
+    /* @__PURE__ */ React.createElement("option", { value: "liso" }, "Lisa")
+  ), /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    setMenu(!menu);
+    setConfirmarBorrar(false);
+  }, className: "p-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-neutral-500", title: "M\xE1s" }, /* @__PURE__ */ React.createElement(Ellipsis, { size: 16 })), menu && /* @__PURE__ */ React.createElement("div", { className: "jarvis-popover absolute right-0 top-full mt-1 z-50 w-56 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-1" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    setMenu(false);
+    lienzoApi.current && lienzoApi.current.descargar();
+  }, className: "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(ImageDown, { size: 15 }), " Descargar como imagen"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    setMenu(false);
+    duplicar();
+  }, className: "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(Copy, { size: 15 }), " Duplicar nota"), !confirmarBorrar ? /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmarBorrar(true), className: "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" }, /* @__PURE__ */ React.createElement(Trash2, { size: 15 }), " Borrar nota\u2026") : /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    NotasStore.borrar(nota.id);
+    setAbierta(null);
+  }, className: "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm bg-red-600 text-white" }, /* @__PURE__ */ React.createElement(Trash2, { size: 15 }), " S\xED, borrar \u201C", nota.titulo || "sin t\xEDtulo", "\u201D"), /* @__PURE__ */ React.createElement("div", { className: "px-2.5 pt-1.5 pb-1 text-[11px] text-neutral-400" }, "Peso: ", Math.round(NotasStore.peso(nota) / 1024), " KB de 1000 KB"))));
+  if (esMobile) {
+    return nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: true, api: lienzoApi })) : panelLista;
+  }
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "w-64 shrink-0" }, panelLista), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 space-y-2" }, nota ? /* @__PURE__ */ React.createElement(React.Fragment, null, encabezado, /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: false, api: lienzoApi })) : /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-10 text-center text-sm text-neutral-500" }, "Eleg\xED una nota de la lista o cre\xE1 una nueva.")));
+}
 const AYUDA = {
+  notas: {
+    que: "Un anotador a mano, como un cuaderno: se escribe con el l\xE1piz de la tablet, se ponen casillas de checklist y cada nota se guarda con su tipo.",
+    botones: [
+      ["L\xE1piz", "escribe. Con l\xE1piz de tablet el trazo sigue la presi\xF3n. Cuatro tintas (azul, negro, rojo, verde) y cuatro grosores."],
+      ["Goma", "borra s\xF3lo lo que toca, con cuatro tama\xF1os. La punta de goma del l\xE1piz (si la tiene) borra sin cambiar de herramienta."],
+      ["Lazo", "rode\xE1 lo escrito para seleccionarlo: arrastralo para moverlo, tir\xE1 de una esquina para agrandarlo o achicarlo, o us\xE1 los botones de abajo (achicar, agrandar, color, duplicar, borrar)."],
+      ["Casilla \u2611", "toc\xE1 donde va y aparece una casilla alineada al rengl\xF3n; despu\xE9s segu\xEDs escribiendo. Tocar una casilla la tilda o destilda."],
+      ["Tachar (\u224B)", "como en Nebo: un zigzag encima de lo escrito lo borra. Se apaga con ese mismo bot\xF3n."],
+      ["Mano", "decide si el dedo escribe o s\xF3lo mueve la hoja. Apenas se usa un l\xE1piz, el dedo pasa a mover solo (y la palma no raya)."],
+      ["Tipos (etiqueta)", "crea, renombra o borra tipos. Borrar un tipo NO borra sus notas: pasan a \u201CSin tipo\u201D."],
+      ["\u22EF", "descargar la nota como imagen, duplicarla o borrarla."]
+    ],
+    reglas: [
+      "Se guarda sola en cada trazo y viaja al celular por la nube, una nota por documento.",
+      "Dos dedos: mover la hoja y pellizcar para acercar o alejar. En la compu: Ctrl+Z / Ctrl+Y, Supr borra lo seleccionado.",
+      "La hoja crece sola hacia abajo a medida que se escribe."
+    ]
+  },
   dia: {
     que: "La jornada de hoy, en orden. Es la pantalla de trabajo: se abre ac\xE1 y se va tachando.",
     botones: [
@@ -8568,6 +10248,7 @@ function App() {
   }, [headerAbierto]);
   const tabs = [
     { key: "dia", label: "Mi d\xEDa", icon: Sun },
+    { key: "notas", label: "Notas", icon: NotebookPen },
     { key: "organizar", label: "Organizar", icon: ClipboardList },
     { key: "semana", label: "Semana", icon: Calendar },
     { key: "rutina", label: "Rutina", icon: Clock },
@@ -8765,7 +10446,7 @@ function App() {
       agregarObjetivoSemanal,
       migracionInfo: lpMigracionInfo
     }
-  ), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Copias de seguridad, sincronizaci\xF3n con Sheets y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Copia de seguridad en archivo"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Conect\xE1 una carpeta para respaldo autom\xE1tico, o hac\xE9 una copia manual para descargar / importar."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(BackupControl, null))), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Sincronizaci\xF3n con Google Sheets"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Trae la rutina y los objetivos desde los archivos generados por los skills (requiere sync_server.py en la PC).", lastSync ? " \xDAltima sync: " + lastSync + "." : ""), /* @__PURE__ */ React.createElement(
+  ), tab === "notas" && /* @__PURE__ */ React.createElement(Notas, null), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Copias de seguridad, sincronizaci\xF3n con Sheets y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Copia de seguridad en archivo"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Conect\xE1 una carpeta para respaldo autom\xE1tico, o hac\xE9 una copia manual para descargar / importar."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(BackupControl, null))), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Sincronizaci\xF3n con Google Sheets"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Trae la rutina y los objetivos desde los archivos generados por los skills (requiere sync_server.py en la PC).", lastSync ? " \xDAltima sync: " + lastSync + "." : ""), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: handleSync,
