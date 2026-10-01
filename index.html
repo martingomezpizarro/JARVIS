@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0d0b07" />
+  <meta name="theme-color" content="#0E0D0A" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -17,11 +17,35 @@
       darkMode: 'class',
       theme: {
         extend: {
+          // VALLE DE LA PAZ (2026-10-01) — paleta del Guerrero Dragón.
+          // "amber" pasa a ser el DORADO del pergamino y "neutral" el
+          // marfil/negro panda: así TODAS las clases existentes toman la
+          // identidad nueva sin tocar cada componente. Los tonos 600-800 del
+          // dorado son más oscuros que el dorado puro para que el TEXTO dorado
+          // se lea sobre fondo claro (4.5:1).
+          colors: {
+            white: '#FFFDF8',
+            amber: {
+              50: '#FDF8EA', 100: '#FAEFD3', 200: '#F6E2B5', 300: '#F0D08A', 400: '#EBC36A',
+              500: '#E6B54A', 600: '#8A5E0C', 700: '#6F4B09', 800: '#553A08', 900: '#3F2C07', 950: '#271B04',
+            },
+            neutral: {
+              50: '#FAF7F0', 100: '#F4EFE4', 200: '#E2DACA', 300: '#CFC5B1', 400: '#A39A88',
+              500: '#6F6858', 600: '#4F493E', 700: '#3D382F', 800: '#2E2A22', 900: '#1A1813', 950: '#0E0D0A',
+            },
+            jade: {
+              50: '#E8F3EC', 100: '#CFE6D8', 200: '#A3CFB4', 300: '#7FD1AC', 400: '#4FA97F',
+              500: '#237A56', 600: '#1E6A4B', 700: '#18563D', 800: '#12422F', 900: '#0C2E21',
+            },
+            laca: { 400: '#F08A76', 500: '#C0412F', 600: '#B5372A', 700: '#8F2B21' },
+            durazno: { 200: '#F8E1D5', 300: '#F3CDBA', 400: '#E8B9A3', 500: '#E89C7E' },
+          },
           fontFamily: {
-            serif: ['Georgia', 'ui-serif', 'serif'],
-            sans: ['system-ui', 'sans-serif'],
+            serif: ['"Bricolage Grotesque"', 'system-ui', 'sans-serif'],
+            sans: ['"Instrument Sans"', 'system-ui', 'sans-serif'],
             mono: ['ui-monospace', 'SFMono-Regular', 'monospace'],
-          }
+          },
+          borderRadius: { lg: '10px', xl: '16px', '2xl': '24px' }
         }
       }
     }
@@ -58,8 +82,8 @@
 
   <style>
     html, body, #root { min-height: 100vh; }
-    body { background: #fafaf9; }
-    .dark body { background: #0a0a0a; }
+    body { background: #F4EFE4; }
+    .dark body { background: #0E0D0A; }
 
     /* ========================================================================
        TOKENS — vista "I have a dream" (Objetivos de largo plazo).
@@ -258,10 +282,10 @@
            el contenido de atrás se leía a través del panel y se mezclaba con
            los botones. Con z-index alto queda siempre por encima de todo. */
         z-index: 210 !important;
-        background: #ffffff !important;
+        background: #FFFDF8 !important;
         box-shadow: 0 -8px 40px rgba(0,0,0,.55) !important;
       }
-      .dark .jarvis-popover { background: #171310 !important; }
+      .dark .jarvis-popover { background: #1A1813 !important; }
 
       /* Telón detrás del panel: lo despega visualmente de la lista y, al
          tocarlo, lo cierra. En escritorio no existe. */
@@ -305,8 +329,8 @@
   <style>
     :root {
       --apple-curva: cubic-bezier(.32, .72, 0, 1);   /* resorte crítico ~0.4s */
-      --apple-chrome-claro: rgba(250, 246, 236, .72);
-      --apple-chrome-oscuro: rgba(13, 11, 7, .72);
+      --apple-chrome-claro: rgba(244, 239, 228, .78);
+      --apple-chrome-oscuro: rgba(14, 13, 10, .78);
       --apple-material: blur(20px) saturate(180%);
     }
     html { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
@@ -371,12 +395,12 @@
       .jarvis-sidebar.jarvis-sidebar {
         transition: transform .42s var(--apple-curva) !important;
         will-change: transform;
-        background: rgba(250, 246, 236, .86) !important;
+        background: #15130F !important;
         -webkit-backdrop-filter: blur(30px) saturate(180%);
         backdrop-filter: blur(30px) saturate(180%);
         box-shadow: 0 0 40px rgba(0, 0, 0, .25);
       }
-      .dark .jarvis-sidebar.jarvis-sidebar { background: rgba(13, 11, 7, .86) !important; }
+      .dark .jarvis-sidebar.jarvis-sidebar { background: #070605 !important; }
       .jarvis-sidebar.jarvis-sidebar-cerrada { box-shadow: none; }
       /* touch-action no se hereda y la <nav> es contenedor de scroll propio:
          hay que ponerlo en todo el cajón o el navegador se queda con el gesto. */
@@ -398,19 +422,41 @@
       html { scroll-behavior: auto !important; }
     }
     @media (prefers-reduced-transparency: reduce) {
-      .jarvis-chrome, .jarvis-sidebar.jarvis-sidebar {
+      .jarvis-chrome {
         -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
-        background: #faf6ec !important;
+        background: #F4EFE4 !important;
       }
-      .dark .jarvis-chrome, .dark .jarvis-sidebar.jarvis-sidebar { background: #0d0b07 !important; }
+      .dark .jarvis-chrome { background: #0E0D0A !important; }
     }
     @media (prefers-contrast: more) {
-      .jarvis-chrome { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background: #faf6ec !important; }
-      .dark .jarvis-chrome { background: #0d0b07 !important; }
+      .jarvis-chrome { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background: #F4EFE4 !important; }
+      .dark .jarvis-chrome { background: #0E0D0A !important; }
       .jarvis-chrome-top { border-bottom-color: currentColor !important; }
     }
   </style>
 
+
+  <!-- ── CAPA VALLE DE LA PAZ (2026-10-01, fase 1) ──────────────────────
+       Paleta del Guerrero Dragón: negro panda / marfil, jade, dorado del
+       pergamino, rojo laca. La mayor parte vive en tailwind.config (amber =
+       dorado, neutral = panda); acá va lo que no es una clase de utilidad:
+       el riel lateral, que es negro en los DOS modos. -->
+  <style>
+    :root { --valle-riel: #15130F; --valle-riel-borde: #15130F; --valle-riel-tinta: #B9B0A0; }
+    .dark { --valle-riel: #070605; --valle-riel-borde: #24211A; --valle-riel-tinta: #8F8676; }
+    .jarvis-rail { background: var(--valle-riel) !important; border-color: var(--valle-riel-borde) !important; color: var(--valle-riel-tinta); }
+    .jarvis-rail .jarvis-rail-item { color: var(--valle-riel-tinta); background: transparent; }
+    .jarvis-rail .jarvis-rail-item:hover { color: #F3EDE1; background: rgba(243, 237, 225, .08); }
+    .jarvis-rail .jarvis-rail-item[data-activo] { color: #15130F; background: #E6B54A; }
+    .jarvis-rail .jarvis-rail-pie { border-color: rgba(243, 237, 225, .08) !important; }
+    .jarvis-rail .jarvis-rail-pie button { color: var(--valle-riel-tinta) !important; border-color: rgba(243, 237, 225, .14) !important; }
+    .jarvis-rail .jarvis-rail-pie button:hover { color: #E6B54A !important; }
+    :is(button, [role="button"], summary, a):focus-visible { outline-color: #E6B54A; }
+    ::selection { background: rgba(230, 181, 74, .35); }
+    /* Texto atenuado en modo oscuro: el gris medio no llega a 4.5:1 sobre negro
+       panda. Sólo donde el componente no eligió ya su propio tono oscuro. */
+    .dark .text-neutral-500:not([class*="dark:text-"]) { color: #9A917F; }
+  </style>
   <!-- CAPA APPLE — comportamiento: scroll-edge y cajón arrastrable -->
   <script>
     (function () {
@@ -7650,6 +7696,7 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
     "Deshacer"
   )));
 }
+const LOGO_JARVIS = typeof document !== "undefined" && document.querySelector('link[rel="icon"]') ? document.querySelector('link[rel="icon"]').getAttribute("href") : null;
 function BotonTema() {
   const [oscuro, setOscuro] = useState(
     () => typeof document !== "undefined" ? document.documentElement.classList.contains("dark") : true
@@ -10522,29 +10569,30 @@ function App() {
     { key: "recordatorios", label: "Recordatorios", icon: Bell },
     { key: "datos", label: "Cuenta y datos", icon: Database }
   ];
-  return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen bg-[#faf6ec] dark:bg-[#0d0b07] text-neutral-900 dark:text-neutral-100" }, /* @__PURE__ */ React.createElement("style", null, `
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap');
-        body { font-family: 'Inter', system-ui, sans-serif; }
-        .font-serif { font-family: 'Fraunces', Georgia, serif; }
+  return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen bg-[#F4EFE4] dark:bg-[#0E0D0A] text-neutral-900 dark:text-neutral-100" }, /* @__PURE__ */ React.createElement("style", null, `
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+        body { font-family: 'Instrument Sans', system-ui, sans-serif; }
+        .font-serif { font-family: 'Bricolage Grotesque', system-ui, sans-serif; letter-spacing: -0.02em; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
-        .dark ::-webkit-scrollbar-thumb { background: rgba(230,168,23,0.35); }
+        .dark ::-webkit-scrollbar-thumb { background: rgba(230,181,74,0.35); }
       `), /* @__PURE__ */ React.createElement("div", { className: "flex items-start" }, esMobile && sidebarAbierto && /* @__PURE__ */ React.createElement("div", { className: "jarvis-backdrop", onClick: () => setSidebarAbierto(false) }), /* @__PURE__ */ React.createElement(
     "aside",
     {
-      className: `jarvis-sidebar jarvis-chrome shrink-0 sticky top-0 h-screen border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 md:bg-white/70 md:dark:bg-neutral-950/70 backdrop-blur-md z-40 flex flex-col transition-transform md:transition-[width] duration-200 ${esMobile ? `w-60 ${sidebarAbierto ? "" : "jarvis-sidebar-cerrada"}` : sidebarAbierto ? "w-52" : "w-14"}`
+      className: `jarvis-sidebar jarvis-rail shrink-0 sticky top-0 h-screen border-r z-40 flex flex-col transition-transform md:transition-[width] duration-200 ${esMobile ? `w-60 ${sidebarAbierto ? "" : "jarvis-sidebar-cerrada"}` : sidebarAbierto ? "w-56" : "w-[84px]"}`
     },
-    /* @__PURE__ */ React.createElement("div", { className: `flex items-center gap-2 p-2 ${sidebarAbierto ? "" : "justify-center"}` }, /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { className: `flex items-center gap-2.5 ${sidebarAbierto ? "px-3 pt-4 pb-3" : "flex-col pt-4 pb-2"}` }, LOGO_JARVIS && /* @__PURE__ */ React.createElement("img", { src: LOGO_JARVIS, alt: "Jarvis", className: "w-11 h-11 rounded-[14px] shrink-0" }), sidebarAbierto && /* @__PURE__ */ React.createElement("span", { className: "font-serif text-xl font-bold text-amber-500 truncate" }, "Jarvis"), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => setSidebarAbierto(!sidebarAbierto),
         title: sidebarAbierto ? "Plegar la barra lateral" : "Desplegar la barra lateral",
-        className: "p-1.5 rounded-md text-neutral-500 hover:text-amber-600 hover:bg-neutral-100 dark:hover:bg-neutral-900 shrink-0"
+        "aria-label": sidebarAbierto ? "Plegar la barra lateral" : "Desplegar la barra lateral",
+        className: `jarvis-rail-item w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${sidebarAbierto ? "ml-auto" : ""}`
       },
-      sidebarAbierto ? /* @__PURE__ */ React.createElement(PanelLeftClose, { size: 17 }) : /* @__PURE__ */ React.createElement(Menu, { size: 17 })
-    ), sidebarAbierto && /* @__PURE__ */ React.createElement("span", { className: "font-serif text-base font-medium text-amber-600 dark:text-amber-400 truncate" }, "Jarvis")),
-    /* @__PURE__ */ React.createElement("nav", { className: "flex-1 overflow-y-auto px-2 pb-3 space-y-0.5" }, tabs.map((t) => {
+      sidebarAbierto ? /* @__PURE__ */ React.createElement(PanelLeftClose, { size: 18 }) : /* @__PURE__ */ React.createElement(Menu, { size: 18 })
+    )),
+    /* @__PURE__ */ React.createElement("nav", { className: `flex-1 overflow-y-auto pb-3 flex flex-col gap-1.5 ${sidebarAbierto ? "px-3" : "items-center px-0"}` }, tabs.map((t) => {
       const Icon = t.icon;
       const active = tab === t.key;
       return /* @__PURE__ */ React.createElement(
@@ -10556,13 +10604,16 @@ function App() {
             if (esMobile) setSidebarAbierto(false);
           },
           title: t.label,
-          className: `w-full flex items-center gap-2.5 rounded-md text-sm font-medium transition-colors ${sidebarAbierto ? "px-2.5 py-2" : "px-0 py-2 justify-center"} ${active ? "bg-amber-500 text-neutral-950" : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"}`
+          "aria-label": t.label,
+          "data-activo": active ? "" : void 0,
+          "aria-current": active ? "page" : void 0,
+          className: `jarvis-rail-item flex items-center gap-3 rounded-[14px] text-sm font-semibold transition-colors ${sidebarAbierto ? "w-full min-h-[44px] px-3" : "w-12 h-12 justify-center"}`
         },
-        /* @__PURE__ */ React.createElement(Icon, { size: 16 }),
+        /* @__PURE__ */ React.createElement(Icon, { size: 20, strokeWidth: 1.75 }),
         sidebarAbierto && /* @__PURE__ */ React.createElement("span", { className: "truncate" }, t.label)
       );
     })),
-    !headerAbierto && /* @__PURE__ */ React.createElement("div", { className: `p-2 border-t border-neutral-200 dark:border-neutral-800 flex ${sidebarAbierto ? "" : "justify-center"}` }, /* @__PURE__ */ React.createElement(BotonTema, null))
+    !headerAbierto && /* @__PURE__ */ React.createElement("div", { className: `jarvis-rail-pie p-3 border-t flex ${sidebarAbierto ? "" : "justify-center"}` }, /* @__PURE__ */ React.createElement(BotonTema, null))
   ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, headerAbierto ? /* @__PURE__ */ React.createElement("div", { className: "jarvis-chrome jarvis-chrome-top border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, esMobile && /* @__PURE__ */ React.createElement(
     "button",
     {
