@@ -289,6 +289,227 @@
     @media (min-width: 768px) { .jarvis-backdrop, .jarvis-fab, .jarvis-popover-fondo { display: none !important; } }
   </style>
 
+  <!-- ── CAPA APPLE (2026-10-01) ─────────────────────────────────────────
+       Criterios de interfaz de Apple llevados a la web. Todo vive en este
+       bloque + el script de abajo: para quitarla, borrar ambos (y las clases
+       jarvis-chrome / jarvis-materializar del JSX, que sin esto no hacen nada).
+       1) Respuesta inmediata: el botón reacciona al APOYAR el dedo, no al soltar.
+       2) Materiales: barras translúcidas con el contenido pasando por debajo;
+          la línea divisoria aparece sólo cuando hay algo debajo (scroll-edge).
+       3) Movimiento: cajón y paneles con curva tipo resorte sin rebote,
+          paneles que se "materializan" (desenfoque + escala) en vez de un fade.
+       4) Cajón lateral del celular: se arrastra 1:1 con el dedo y se cierra
+          según la velocidad al soltar (script más abajo).
+       5) Tipografía: tracking según tamaño y números tabulares.
+       6) Accesibilidad: menos movimiento / menos transparencia / más contraste. -->
+  <style>
+    :root {
+      --apple-curva: cubic-bezier(.32, .72, 0, 1);   /* resorte crítico ~0.4s */
+      --apple-chrome-claro: rgba(250, 246, 236, .72);
+      --apple-chrome-oscuro: rgba(13, 11, 7, .72);
+      --apple-material: blur(20px) saturate(180%);
+    }
+    html { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+    /* 1) Respuesta al apoyar. `scale` (propiedad suelta) se compone con los
+          translate de Tailwind sin pisarlos. */
+    button, [role="button"], summary {
+      transition-property: color, background-color, border-color, opacity, box-shadow, scale;
+      transition-duration: 150ms;
+    }
+    button:not(:disabled):not([draggable="true"]):not(.lp-grab):active,
+    [role="button"]:not([aria-disabled="true"]):not([draggable="true"]):active,
+    summary:active {
+      scale: .97;
+      transition-duration: 80ms;
+    }
+    :is(button, [role="button"], summary, a):focus-visible {
+      outline: 2px solid #f59e0b;
+      outline-offset: 2px;
+    }
+
+    /* 2) Materiales */
+    .jarvis-chrome {
+      background: var(--apple-chrome-claro) !important;
+      -webkit-backdrop-filter: var(--apple-material);
+      backdrop-filter: var(--apple-material);
+    }
+    .dark .jarvis-chrome { background: var(--apple-chrome-oscuro) !important; }
+    .jarvis-chrome-top {
+      border-bottom-color: transparent !important;
+      transition: border-color .25s ease, box-shadow .25s ease;
+    }
+    html[data-scroll-edge] .jarvis-chrome-top {
+      border-bottom-color: rgba(0, 0, 0, .08) !important;
+      box-shadow: 0 1px 12px rgba(0, 0, 0, .04);
+    }
+    html.dark[data-scroll-edge] .jarvis-chrome-top {
+      border-bottom-color: rgba(255, 255, 255, .07) !important;
+      box-shadow: 0 1px 12px rgba(0, 0, 0, .35);
+    }
+
+    /* 3) Movimiento: paneles que se materializan desde su ancla */
+    @keyframes jarvis-materializar {
+      from { opacity: 0; scale: .96; translate: 0 6px; filter: blur(6px); }
+      to   { opacity: 1; scale: 1;   translate: 0 0;   filter: blur(0); }
+    }
+    @keyframes jarvis-aparecer { from { opacity: 0; } to { opacity: 1; } }
+    .jarvis-popover, .jarvis-materializar {
+      animation: jarvis-materializar .32s var(--apple-curva) both;
+      transform-origin: top right;
+    }
+    .jarvis-materializar-abajo { transform-origin: bottom center; }
+    .jarvis-backdrop, .jarvis-popover-fondo { animation: jarvis-aparecer .3s ease-out both; }
+
+    @media (max-width: 767px) {
+      .jarvis-popover { transform-origin: bottom center; }
+
+      /* Cajón lateral: curva de hoja de iOS y material más denso (va encima
+         de texto). pan-y deja el scroll vertical al navegador y nos da el
+         horizontal para arrastrar. */
+      .jarvis-sidebar.jarvis-sidebar {
+        transition: transform .42s var(--apple-curva) !important;
+        will-change: transform;
+        background: rgba(250, 246, 236, .86) !important;
+        -webkit-backdrop-filter: blur(30px) saturate(180%);
+        backdrop-filter: blur(30px) saturate(180%);
+        box-shadow: 0 0 40px rgba(0, 0, 0, .25);
+      }
+      .dark .jarvis-sidebar.jarvis-sidebar { background: rgba(13, 11, 7, .86) !important; }
+      .jarvis-sidebar.jarvis-sidebar-cerrada { box-shadow: none; }
+      /* touch-action no se hereda y la <nav> es contenedor de scroll propio:
+         hay que ponerlo en todo el cajón o el navegador se queda con el gesto. */
+      .jarvis-sidebar, .jarvis-sidebar * { touch-action: pan-y; }
+      .jarvis-backdrop { background: rgba(0, 0, 0, .4); transition: opacity .42s var(--apple-curva); }
+    }
+
+    /* 5) Tipografía: tracking inverso al tamaño, interlineado inverso también */
+    h1, h2, .text-2xl, .text-3xl, .text-4xl { letter-spacing: -0.02em; line-height: 1.1; }
+    h3, .text-xl, .text-lg { letter-spacing: -0.012em; }
+    .text-\[9px\], .text-\[10px\], .text-\[11px\] { letter-spacing: .01em; }
+    .jarvis-numeros { font-variant-numeric: tabular-nums; }
+
+    /* 6) Accesibilidad */
+    @media (prefers-reduced-motion: reduce) {
+      button:active, [role="button"]:active, summary:active { scale: none !important; }
+      .jarvis-popover, .jarvis-materializar { animation-name: jarvis-aparecer !important; animation-duration: .2s !important; }
+      .jarvis-sidebar.jarvis-sidebar { transition-duration: .01ms !important; }
+      html { scroll-behavior: auto !important; }
+    }
+    @media (prefers-reduced-transparency: reduce) {
+      .jarvis-chrome, .jarvis-sidebar.jarvis-sidebar {
+        -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+        background: #faf6ec !important;
+      }
+      .dark .jarvis-chrome, .dark .jarvis-sidebar.jarvis-sidebar { background: #0d0b07 !important; }
+    }
+    @media (prefers-contrast: more) {
+      .jarvis-chrome { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background: #faf6ec !important; }
+      .dark .jarvis-chrome { background: #0d0b07 !important; }
+      .jarvis-chrome-top { border-bottom-color: currentColor !important; }
+    }
+  </style>
+
+  <!-- CAPA APPLE — comportamiento: scroll-edge y cajón arrastrable -->
+  <script>
+    (function () {
+      // ── Scroll-edge: la línea bajo la barra sólo existe con contenido debajo
+      var raf = 0;
+      function marcarBorde() {
+        raf = 0;
+        if (window.scrollY > 4) document.documentElement.setAttribute("data-scroll-edge", "");
+        else document.documentElement.removeAttribute("data-scroll-edge");
+      }
+      window.addEventListener("scroll", function () { if (!raf) raf = requestAnimationFrame(marcarBorde); }, { passive: true });
+      marcarBorde();
+
+      // ── Cajón lateral (celular): seguimiento 1:1, decide por velocidad
+      var celular = window.matchMedia("(max-width: 767px)");
+      var reducir = window.matchMedia("(prefers-reduced-motion: reduce)");
+      var HISTERESIS = 10;               // px antes de decidir la dirección
+      var g = null;                       // gesto en curso
+
+      function proyectar(v) { var d = 0.998; return (v / 1000) * d / (1 - d); }
+      function goma(o, dim) { var c = 0.55; return (o * dim * c) / (dim + c * Math.abs(o)); }
+      function velocidad(h) {
+        if (h.length < 2) return 0;
+        var a = h[0], b = h[h.length - 1], dt = b.t - a.t;
+        return dt > 0 ? (b.x - a.x) / dt * 1000 : 0;   // px/s
+      }
+
+      document.addEventListener("pointerdown", function (e) {
+        if (!celular.matches || e.pointerType === "mouse") return;
+        var aside = e.target.closest && e.target.closest(".jarvis-sidebar");
+        if (!aside || aside.classList.contains("jarvis-sidebar-cerrada")) return;
+        g = { aside: aside, x0: e.clientX, y0: e.clientY, id: e.pointerId,
+              ancho: aside.getBoundingClientRect().width, modo: null, dx: 0,
+              hist: [{ x: e.clientX, t: e.timeStamp }] };
+      }, true);
+
+      document.addEventListener("pointermove", function (e) {
+        if (!g || e.pointerId !== g.id) return;
+        var dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+        if (!g.modo) {
+          if (Math.abs(dx) < HISTERESIS && Math.abs(dy) < HISTERESIS) return;
+          if (Math.abs(dy) > Math.abs(dx)) { g = null; return; }   // es scroll vertical
+          g.modo = "arrastre";
+          g.x0 = e.clientX; dx = 0;                                  // sin salto al tomarlo
+          try { g.aside.setPointerCapture(e.pointerId); } catch (_) {}
+          g.aside.style.transition = "none";
+          g.fondo = document.querySelector(".jarvis-backdrop");
+          if (g.fondo) g.fondo.style.transition = "none";
+        }
+        g.dx = dx;
+        var x = dx < 0 ? dx : goma(dx, g.ancho);                     // hacia afuera, resiste
+        g.aside.style.transform = "translateX(" + x + "px)";
+        if (g.fondo) g.fondo.style.opacity = String(Math.max(0, 1 + Math.min(0, dx) / g.ancho));
+        g.hist.push({ x: e.clientX, t: e.timeStamp });
+        while (g.hist.length > 2 && e.timeStamp - g.hist[0].t > 80) g.hist.shift();
+      }, true);
+
+      function soltar(e) {
+        if (!g || e.pointerId !== g.id) return;
+        var gesto = g; g = null;
+        if (gesto.modo !== "arrastre") return;
+        var v = velocidad(gesto.hist);
+        var destino = gesto.dx + proyectar(v);
+        var cerrar = v < -250 || (v <= 250 && destino < -gesto.ancho / 2);
+
+        // Se suelta el control inline y la transición CSS sigue desde la
+        // posición actual del dedo, no desde el borde.
+        var a = gesto.aside, f = gesto.fondo;
+        if (!reducir.matches && Math.abs(v) > 0) {
+          // la duración acompaña la velocidad: un flick termina más rápido
+          var restante = cerrar ? gesto.ancho + gesto.dx : Math.abs(gesto.dx);
+          var t = Math.max(.18, Math.min(.42, restante / Math.abs(v)));
+          a.style.transition = "transform " + t + "s var(--apple-curva)";
+        } else {
+          a.style.transition = "";
+        }
+        a.style.transform = "";
+        if (f) { f.style.transition = ""; f.style.opacity = cerrar ? "0" : ""; }
+        if (cerrar && f) f.click();                                  // React cierra el cajón
+        setTimeout(function () { a.style.transition = ""; }, 450);
+
+        // El arrastre no debe terminar en un toque sobre una pestaña
+        // (si el navegador no manda ese click, el bloqueo se retira solo)
+        function bloquear(ev) {
+          ev.stopPropagation(); ev.preventDefault();
+          window.removeEventListener("click", bloquear, true);
+        }
+        window.addEventListener("click", bloquear, true);
+        setTimeout(function () { window.removeEventListener("click", bloquear, true); }, 350);
+      }
+      document.addEventListener("pointerup", soltar, true);
+      document.addEventListener("pointercancel", function (e) {
+        if (!g || e.pointerId !== g.id) return;
+        if (g.modo === "arrastre") { g.aside.style.transition = ""; g.aside.style.transform = ""; if (g.fondo) { g.fondo.style.transition = ""; g.fondo.style.opacity = ""; } }
+        g = null;
+      }, true);
+    })();
+  </script>
+
   <!-- Shim: window.storage sobre localStorage -->
   <script>
     window.storage = {
@@ -7467,7 +7688,7 @@ function UsuarioControl() {
     },
     u.foto ? /* @__PURE__ */ React.createElement("img", { src: u.foto, alt: "", referrerPolicy: "no-referrer", className: "w-4 h-4 rounded-full" }) : /* @__PURE__ */ React.createElement("span", { className: "w-4 h-4 rounded-full bg-neutral-300 dark:bg-neutral-700 text-[10px] leading-4 text-center" }, inicial),
     /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none max-w-[74px] truncate" }, (u.nombre || "Cuenta").split(" ")[0])
-  ), abierto && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-40", onClick: () => setAbierto(false) }), /* @__PURE__ */ React.createElement("div", { className: "absolute right-0 top-full mt-1 z-50 w-60 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-3 text-left" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium truncate text-neutral-800 dark:text-neutral-200" }, u.nombre), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 truncate" }, u.email), /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400 mt-2 mb-2.5 leading-snug" }, "Tu informaci\xF3n es s\xF3lo tuya: nadie m\xE1s de la familia la ve."), /* @__PURE__ */ React.createElement(
+  ), abierto && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-40", onClick: () => setAbierto(false) }), /* @__PURE__ */ React.createElement("div", { className: "jarvis-materializar absolute right-0 top-full mt-1 z-50 w-60 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-3 text-left" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium truncate text-neutral-800 dark:text-neutral-200" }, u.nombre), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 truncate" }, u.email), /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400 mt-2 mb-2.5 leading-snug" }, "Tu informaci\xF3n es s\xF3lo tuya: nadie m\xE1s de la familia la ve."), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => u.salir(),
@@ -9426,7 +9647,7 @@ function TourGuiado({ paso, setPaso, onCerrar }) {
   const p = TOUR[paso];
   if (!p) return null;
   const ultimo = paso === TOUR.length - 1;
-  return /* @__PURE__ */ React.createElement("div", { className: "fixed left-1/2 bottom-4 z-[80] w-[calc(100vw-24px)] max-w-md -translate-x-1/2" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-400 bg-white dark:bg-neutral-950 shadow-2xl p-4 space-y-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wide text-amber-600 font-medium" }, "Paso ", paso + 1, " de ", TOUR.length), /* @__PURE__ */ React.createElement("button", { onClick: onCerrar, className: "text-[11px] text-neutral-400 hover:text-neutral-600" }, "Saltar")), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg text-neutral-900 dark:text-neutral-100" }, p.titulo), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed" }, p.texto), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 pt-1" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "jarvis-materializar jarvis-materializar-abajo fixed left-1/2 bottom-4 z-[80] w-[calc(100vw-24px)] max-w-md -translate-x-1/2" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-400 bg-white dark:bg-neutral-950 shadow-2xl p-4 space-y-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wide text-amber-600 font-medium" }, "Paso ", paso + 1, " de ", TOUR.length), /* @__PURE__ */ React.createElement("button", { onClick: onCerrar, className: "text-[11px] text-neutral-400 hover:text-neutral-600" }, "Saltar")), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg text-neutral-900 dark:text-neutral-100" }, p.titulo), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed" }, p.texto), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 pt-1" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setPaso(Math.max(0, paso - 1)),
@@ -10312,7 +10533,7 @@ function App() {
       `), /* @__PURE__ */ React.createElement("div", { className: "flex items-start" }, esMobile && sidebarAbierto && /* @__PURE__ */ React.createElement("div", { className: "jarvis-backdrop", onClick: () => setSidebarAbierto(false) }), /* @__PURE__ */ React.createElement(
     "aside",
     {
-      className: `jarvis-sidebar shrink-0 sticky top-0 h-screen border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 md:bg-white/70 md:dark:bg-neutral-950/70 backdrop-blur-md z-40 flex flex-col transition-transform md:transition-[width] duration-200 ${esMobile ? `w-60 ${sidebarAbierto ? "" : "jarvis-sidebar-cerrada"}` : sidebarAbierto ? "w-52" : "w-14"}`
+      className: `jarvis-sidebar jarvis-chrome shrink-0 sticky top-0 h-screen border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 md:bg-white/70 md:dark:bg-neutral-950/70 backdrop-blur-md z-40 flex flex-col transition-transform md:transition-[width] duration-200 ${esMobile ? `w-60 ${sidebarAbierto ? "" : "jarvis-sidebar-cerrada"}` : sidebarAbierto ? "w-52" : "w-14"}`
     },
     /* @__PURE__ */ React.createElement("div", { className: `flex items-center gap-2 p-2 ${sidebarAbierto ? "" : "justify-center"}` }, /* @__PURE__ */ React.createElement(
       "button",
@@ -10342,7 +10563,7 @@ function App() {
       );
     })),
     !headerAbierto && /* @__PURE__ */ React.createElement("div", { className: `p-2 border-t border-neutral-200 dark:border-neutral-800 flex ${sidebarAbierto ? "" : "justify-center"}` }, /* @__PURE__ */ React.createElement(BotonTema, null))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, headerAbierto ? /* @__PURE__ */ React.createElement("div", { className: "border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, esMobile && /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, headerAbierto ? /* @__PURE__ */ React.createElement("div", { className: "jarvis-chrome jarvis-chrome-top border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, esMobile && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setSidebarAbierto(true),
@@ -10350,7 +10571,7 @@ function App() {
       className: "p-2 -ml-1 rounded-lg border border-neutral-200 dark:border-neutral-800 text-amber-600 dark:text-amber-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"
     },
     /* @__PURE__ */ React.createElement(Menu, { size: 20 })
-  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, nombreUsuario, " ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 ", anioActual)), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(UsuarioControl, null), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, nombreUsuario, " ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 ", anioActual)), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "jarvis-numeros flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(UsuarioControl, null), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setHeaderAbierto(false),
@@ -10358,7 +10579,7 @@ function App() {
       className: "p-1.5 rounded-md text-neutral-400 hover:text-amber-600 hover:bg-neutral-100 dark:hover:bg-neutral-900"
     },
     /* @__PURE__ */ React.createElement(ChevronUp, { size: 16 })
-  ))))) : /* @__PURE__ */ React.createElement("div", { className: "border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-1 flex items-center gap-3" }, esMobile && /* @__PURE__ */ React.createElement(
+  ))))) : /* @__PURE__ */ React.createElement("div", { className: "jarvis-chrome jarvis-chrome-top border-b border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/70 backdrop-blur-md sticky top-0 z-30" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[1600px] mx-auto px-4 sm:px-6 py-1 flex items-center gap-3" }, esMobile && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setSidebarAbierto(true),
@@ -10366,7 +10587,7 @@ function App() {
       className: "p-1.5 -ml-1 rounded-md text-amber-600 dark:text-amber-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"
     },
     /* @__PURE__ */ React.createElement(Menu, { size: 18 })
-  ), /* @__PURE__ */ React.createElement("span", { className: "font-serif text-sm font-medium text-amber-600 dark:text-amber-400" }, nombreUsuario), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500 truncate" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" }))), /* @__PURE__ */ React.createElement("span", { className: "ml-auto flex items-center gap-2.5 text-[11px]" }, /* @__PURE__ */ React.createElement("span", { className: "text-red-600 font-medium", title: "Urgentes" }, urgentesCount), /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 font-medium", title: "Semanal" }, semanalCount), /* @__PURE__ */ React.createElement("span", { className: "text-green-600 font-medium", title: "Hechos" }, completados)), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("span", { className: "font-serif text-sm font-medium text-amber-600 dark:text-amber-400" }, nombreUsuario), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500 truncate" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" }))), /* @__PURE__ */ React.createElement("span", { className: "jarvis-numeros ml-auto flex items-center gap-2.5 text-[11px]" }, /* @__PURE__ */ React.createElement("span", { className: "text-red-600 font-medium", title: "Urgentes" }, urgentesCount), /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 font-medium", title: "Semanal" }, semanalCount), /* @__PURE__ */ React.createElement("span", { className: "text-green-600 font-medium", title: "Hechos" }, completados)), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setHeaderAbierto(true),
