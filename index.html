@@ -93,10 +93,10 @@
        dentro de un panel claro.
        ==================================================================== */
     :root {
-      --card:            #FFFFFF;
-      --col-2:           #F1EFE8;
-      --col-3:           #F7F6F1;
-      --col-4:           #FFFFFF;
+      --card:            #FFFDF8;
+      --col-2:           #F4EFE4;
+      --col-3:           #F8F4EB;
+      --col-4:           #FFFDF8;
 
       /* La jerarquía se hace con TAMAÑO y PESO, no con palidez: los tres niveles
          de texto son oscuros. Así ningún nivel "se pierde". */
@@ -107,9 +107,9 @@
       --border:          #DCD9CF;
       --border-strong:   #B9B5A8;
 
-      --accent:          #B45309;   /* acciones: guardar */
-      --accent-bg:       #FAEEDA;
-      --accent-fg:       #7C3A06;
+      --accent:          #1E6A4B;   /* acciones: guardar (jade) */
+      --accent-bg:       #E8F3EC;
+      --accent-fg:       #12422F;
       --on-solid:        #FFFFFF;   /* texto sobre un botón sólido */
       --track-on-tint:   rgba(0,0,0,0.08); /* fondo de la barra de progreso sobre el tinte del área */
       --danger:          #A32D2D;   /* eliminar */
@@ -118,7 +118,7 @@
       --success-bg:      #EAF3DE;
       --neutral-pill-bg: #F1EFE8;
 
-      --focus-ring:      #B45309;
+      --focus-ring:      #E6B54A;
 
       /* Tintes de área. Cada área guarda el NOMBRE del token, no un hex.
          Los 12 primeros conservan la identidad cálida actual del dashboard
@@ -141,6 +141,30 @@
       --area-verdemar-bg:   #D5F0E6;  --area-verdemar-fg:   #05372C;
       --area-coral-bg:      #F8E3DB;  --area-coral-fg:      #4E1D0D;
       --area-verde-bg:      #E1EFCF;  --area-verde-fg:      #1B3707;
+    }
+
+    /* VALLE DE LA PAZ — modo oscuro de estos mismos tokens (negro panda).
+       Los tintes de área (pastel con texto oscuro) quedan iguales: se leen bien
+       como fichas sobre el negro. */
+    .dark {
+      --card:            #1A1813;
+      --col-2:           #24211A;
+      --col-3:           #1F1C16;
+      --col-4:           #1A1813;
+      --text-primary:    #F3EDE1;
+      --text-secondary:  #CEC5B4;
+      --text-muted:      #9A917F;
+      --border:          #2E2A22;
+      --border-strong:   #4F493E;
+      --accent:          #237A56;
+      --accent-bg:       #12422F;
+      --accent-fg:       #A3CFB4;
+      --danger:          #F08A76;
+      --danger-bg:       #3A1712;
+      --success:         #7FD1AC;
+      --success-bg:      #12422F;
+      --neutral-pill-bg: #24211A;
+      --track-on-tint:   rgba(0,0,0,0.14);
     }
 
     /* Foco de teclado visible en todos los controles de la vista */
@@ -310,7 +334,8 @@
       .jarvis-sidebar-cerrada { transform: translateX(-100%); }
       .jarvis-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,.45); }
     }
-    @media (min-width: 768px) { .jarvis-backdrop, .jarvis-fab, .jarvis-popover-fondo { display: none !important; } }
+    @media (min-width: 768px) { .jarvis-backdrop, .jarvis-fab, .jarvis-popover-fondo, .jarvis-navinf { display: none !important; } }
+    @media (max-width: 767px) { #root { padding-bottom: calc(84px + env(safe-area-inset-bottom)); } }
   </style>
 
   <!-- ── CAPA APPLE (2026-10-01) ─────────────────────────────────────────
@@ -2701,7 +2726,7 @@ function AssignPopover({ objetivo, onAsignar, onClose }) {
     "div",
     {
       ref,
-      className: "jarvis-popover absolute z-50 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl shadow-xl p-3.5 min-w-[230px] max-w-[calc(100vw-24px)]",
+      className: "jarvis-popover absolute z-50 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-2xl shadow-xl p-3.5 min-w-[230px] max-w-[calc(100vw-24px)]",
       style: { top: "100%", right: 0, marginTop: 4 },
       onClick: (e) => e.stopPropagation()
     },
@@ -3070,7 +3095,7 @@ function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, a
   return /* @__PURE__ */ React.createElement(
     "div",
     {
-      className: "rounded-xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-3 space-y-2.5",
+      className: "rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-3 space-y-2.5",
       onClick: (e) => e.stopPropagation()
     },
     /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Hora"), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: hora, onChange: (e) => setHora(e.target.value), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Duraci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: duracion, onChange: (e) => setDuracion(Number(e.target.value)), className: inputCls }, DURACIONES.map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, durLabel(d))))), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[160px]" }, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Actividad", alcanceSemanal && seccion && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " \u2014 qu\xE9 es, esta semana, tu \u201C", seccion, "\u201D")), /* @__PURE__ */ React.createElement("input", { type: "text", value: titulo, onChange: (e) => setTitulo(e.target.value), placeholder: alcanceSemanal ? "Ej: Armar propuesta S&C" : "Ej: Llamada con cliente", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "\xC1rea"), /* @__PURE__ */ React.createElement("select", { value: area, onChange: (e) => setArea(e.target.value), className: inputCls }, areasVivasLista().map((a) => /* @__PURE__ */ React.createElement("option", { key: a.key, value: a.key }, a.key))))),
@@ -3214,7 +3239,7 @@ function EventoForm({ inicial, fechaSugerida, taxonomia, onGuardar, onEliminar, 
       _aviso: { avisar: !!avisar && !!hora, ant }
     });
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/20 p-4 space-y-3", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-sky-700 dark:text-sky-300 font-medium" }, inicial ? "Editar evento" : "Nuevo evento \u2014 una fecha, una vez"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "1. \xC1rea"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/20 p-4 space-y-3", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-sky-700 dark:text-sky-300 font-medium" }, inicial ? "Editar evento" : "Nuevo evento \u2014 una fecha, una vez"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "1. \xC1rea"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.key,
@@ -3604,7 +3629,7 @@ function VistaSemanal({ objetivos: objetivosProp, now, weekDates, setSelectedDay
       return { dia: d, agenda, porInicio, ocupados };
     });
   }, [objetivos, slots, rutinaTick, slotIdxDe, semKey, areaVisible, weekDates]);
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Semana \u2014 vista por sub\xE1rea"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500" }, editMode ? "Click en un bloque \u2192 concretar qu\xE9 hac\xE9s esa franja ESTA semana \xB7 click en una celda vac\xEDa \u2192 crear actividad de ese d\xEDa. Rutina no se toca." : `\u2605 = objetivo o actividad propia: pisa la rutina sin borrarla de su pesta\xF1a. ${punteroFino ? "Arrastr\xE1" : "Toc\xE1"} los objetivos sin fecha del checklist de abajo para agendarlos. Click \u2192 detalle del d\xEDa.`), onReiniciarSemana && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Semana"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500" }, editMode ? "Click en un bloque \u2192 concretar qu\xE9 hac\xE9s esa franja ESTA semana \xB7 click en una celda vac\xEDa \u2192 crear actividad de ese d\xEDa. Rutina no se toca." : `\u2605 = objetivo o actividad propia: pisa la rutina sin borrarla de su pesta\xF1a. ${punteroFino ? "Arrastr\xE1" : "Toc\xE1"} los objetivos sin fecha del checklist de abajo para agendarlos. Click \u2192 detalle del d\xEDa.`), onReiniciarSemana && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
@@ -3649,7 +3674,7 @@ NO se toca: la Rutina ni los Objetivos semanales.
     const cosas = cosasDeLaSemana ? cosasDeLaSemana() : [];
     if (!cosas.length || !onDeshacerSemana) return null;
     const ocultas = cosas.filter((c) => c.oculto).length;
-    return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-sky-300/60 dark:border-sky-900/60 bg-sky-50/50 dark:bg-sky-950/15 p-3 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-sky-700 dark:text-sky-300" }, "Esta semana, encima de tu rutina \u2014 ", cosas.length, " cambio(s)", ocultas > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 font-normal" }, " \xB7 ", ocultas, " sin mostrarse en la grilla")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-1" }, cosas.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.dia + "::" + c.bloqueId, className: "flex items-center gap-2 text-xs bg-white/70 dark:bg-neutral-950/60 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 shrink-0 w-16" }, c.diaFull.slice(0, 3), " ", c.hora), c.oculto ? /* @__PURE__ */ React.createElement("span", { className: "truncate" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "oculta:"), " ", c.original || "\u2014") : /* @__PURE__ */ React.createElement("span", { className: "truncate" }, c.titulo, c.original && c.original !== c.titulo && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " (era ", c.original, ")")), /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-sky-300/60 dark:border-sky-900/60 bg-sky-50/50 dark:bg-sky-950/15 p-3 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-sky-700 dark:text-sky-300" }, "Esta semana, encima de tu rutina \u2014 ", cosas.length, " cambio(s)", ocultas > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 font-normal" }, " \xB7 ", ocultas, " sin mostrarse en la grilla")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-1" }, cosas.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.dia + "::" + c.bloqueId, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-900 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 shrink-0 w-16" }, c.diaFull.slice(0, 3), " ", c.hora), c.oculto ? /* @__PURE__ */ React.createElement("span", { className: "truncate" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "oculta:"), " ", c.original || "\u2014") : /* @__PURE__ */ React.createElement("span", { className: "truncate" }, c.titulo, c.original && c.original !== c.titulo && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " (era ", c.original, ")")), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onDeshacerSemana(c.dia, c.bloqueId),
@@ -3808,9 +3833,11 @@ NO se toca: la Rutina ni los Objetivos semanales.
             style: {
               // El objetivo semanal se destaca: fondo más sólido y
               // borde más grueso, para que se lea que pisó a la rutina.
-              background: esObjetivo ? `${color}30` : `${color}18`,
-              borderLeft: `${esObjetivo ? 5 : 3}px solid ${color}`,
-              boxShadow: esObjetivo ? `inset 0 0 0 1px ${color}55` : void 0,
+              // VALLE: bloque de color pleno, texto con la tinta que se lee encima.
+              background: color,
+              color: tintaSobre(color),
+              borderLeft: `${esObjetivo ? 5 : 3}px solid rgba(0,0,0,${esObjetivo ? 0.35 : 0.18})`,
+              boxShadow: esObjetivo ? "inset 0 0 0 2px rgba(255,253,248,0.55)" : "inset 0 -1px 0 rgba(0,0,0,0.12)",
               outline: editMode ? `1px dashed ${color}60` : void 0,
               position: "relative",
               // Bloques cortos (15' = 3 filas de 5px): sin padding y con
@@ -3840,7 +3867,7 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
             {
               className: "font-medium leading-tight",
               style: {
-                color,
+                color: "inherit",
                 // Dos líneas como máximo y después "…": el título
                 // largo se lee sin romper el ancho de la columna.
                 display: "-webkit-box",
@@ -3859,7 +3886,7 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
             {
               className: "truncate",
               title: contexto,
-              style: { color, opacity: 0.75, fontSize: rowSpan <= 8 ? 8 : 9, lineHeight: "11px", fontStyle: "italic" }
+              style: { color: "inherit", opacity: 0.8, fontSize: rowSpan <= 8 ? 8 : 9, lineHeight: "11px", fontStyle: "italic" }
             },
             contexto
           ), subsBloque.length > 0 && rowSpan >= 6 && /* @__PURE__ */ React.createElement("ul", { style: { margin: "2px 0 0", padding: 0, listStyle: "none" } }, subsBloque.slice(0, maxSubs).map((st) => /* @__PURE__ */ React.createElement(
@@ -3869,8 +3896,8 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
               className: "truncate",
               title: st.titulo,
               style: {
-                color,
-                opacity: st.hecha ? 0.45 : 0.8,
+                color: "inherit",
+                opacity: st.hecha ? 0.5 : 0.85,
                 fontSize: 8,
                 lineHeight: "10px",
                 textDecoration: st.hecha ? "line-through" : "none"
@@ -3879,7 +3906,7 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
             st.hecha ? "\u2611" : "\u2610",
             " ",
             st.titulo
-          )), subsBloque.length > maxSubs && /* @__PURE__ */ React.createElement("li", { style: { color, opacity: 0.55, fontSize: 8, lineHeight: "10px" } }, "+", subsBloque.length - maxSubs, " m\xE1s"))),
+          )), subsBloque.length > maxSubs && /* @__PURE__ */ React.createElement("li", { style: { color: "inherit", opacity: 0.6, fontSize: 8, lineHeight: "10px" } }, "+", subsBloque.length - maxSubs, " m\xE1s"))),
           sims.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: SANGRIA, right: 2, top: 0, bottom: 0 } }, sims.map((sim, si) => {
             const cSim = colorDeSeccion(sim.area, sim.subarea);
             const offset = Math.max(0, timeToMinutes(sim.hora) - inicioMin);
@@ -3900,8 +3927,10 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
                   height: alto - 2,
                   left: `${col * anchoCol}%`,
                   width: `calc(${anchoCol}% - 2px)`,
-                  background: simObj ? `${cSim}38` : `${cSim}22`,
-                  borderLeft: `${simObj ? 3 : 2}px solid ${cSim}`,
+                  background: cSim,
+                  color: tintaSobre(cSim),
+                  boxShadow: "0 0 0 1px rgba(0,0,0,0.25)",
+                  borderLeft: `${simObj ? 3 : 2}px solid rgba(0,0,0,0.3)`,
                   borderRadius: 2,
                   padding: "1px 3px",
                   overflow: "hidden",
@@ -3910,8 +3939,8 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
                   zIndex: 2
                 }
               },
-              /* @__PURE__ */ React.createElement("div", { className: "truncate", style: { color: cSim, fontWeight: 500 } }, areaObsoleta(sim.area) ? "\u26A0 " : "", simObj ? "\u2605 " : "", simTitulo),
-              alto >= 26 && /* @__PURE__ */ React.createElement("div", { className: "truncate", style: { color: cSim, opacity: 0.7, fontSize: 8, lineHeight: "10px" } }, sim.hora, sim.subarea && sim.subarea !== simTitulo ? ` \xB7 ${sim.subarea}` : "")
+              /* @__PURE__ */ React.createElement("div", { className: "truncate", style: { color: "inherit", fontWeight: 600 } }, areaObsoleta(sim.area) ? "\u26A0 " : "", simObj ? "\u2605 " : "", simTitulo),
+              alto >= 26 && /* @__PURE__ */ React.createElement("div", { className: "truncate", style: { color: "inherit", opacity: 0.8, fontSize: 8, lineHeight: "10px" } }, sim.hora, sim.subarea && sim.subarea !== simTitulo ? ` \xB7 ${sim.subarea}` : "")
             );
           })),
           enResize && /* @__PURE__ */ React.createElement(
@@ -4339,7 +4368,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
       }
     );
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Objetivos de la semana"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Estructura: ", /* @__PURE__ */ React.createElement("strong", null, "\xC1rea"), " \u203A Sub\xE1rea \u203A Tarea espec\xEDfica \u203A d\xEDa + hora + repetici\xF3n", /* @__PURE__ */ React.createElement("br", null), "Lo que marc\xE1s como hecho sale de ", /* @__PURE__ */ React.createElement("strong", null, "Semana"), " al instante, pero ac\xE1 queda tachado hasta que lo archives.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, cumplidosVivos.length > 0 && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Objetivos de la semana"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Estructura: ", /* @__PURE__ */ React.createElement("strong", null, "\xC1rea"), " \u203A Sub\xE1rea \u203A Tarea espec\xEDfica \u203A d\xEDa + hora + repetici\xF3n", /* @__PURE__ */ React.createElement("br", null), "Lo que marc\xE1s como hecho sale de ", /* @__PURE__ */ React.createElement("strong", null, "Semana"), " al instante, pero ac\xE1 queda tachado hasta que lo archives.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, cumplidosVivos.length > 0 && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => archivarObjetivos(cumplidosVivos.map((o) => o.id)),
@@ -4365,7 +4394,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
     "button",
     {
       onClick: () => setTab && setTab("largoplazo"),
-      className: "w-full rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/10 p-3 text-left hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
+      className: "w-full rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/10 p-3 text-left hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
     },
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2" }, /* @__PURE__ */ React.createElement(Trophy, { size: 13, className: "text-amber-500" }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-amber-700 dark:text-amber-300" }, "Largo plazo \u2014 el rumbo detr\xE1s de esta semana"), /* @__PURE__ */ React.createElement(ChevronRight, { size: 12, className: "text-amber-400 ml-auto" })),
     /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, lpResumen.map((o) => {
@@ -4422,7 +4451,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
       "div",
       {
         key: a.area,
-        className: `rounded-xl border bg-white dark:bg-neutral-950 overflow-hidden ${vacia ? "border-dashed border-neutral-200 dark:border-neutral-800" : "border-neutral-200 dark:border-neutral-800"}`
+        className: `rounded-2xl border bg-white dark:bg-neutral-900 overflow-hidden ${vacia ? "border-dashed border-neutral-200/70 dark:border-neutral-800/80" : "border-neutral-200/70 dark:border-neutral-800/80"}`
       },
       /* @__PURE__ */ React.createElement(
         "div",
@@ -4431,7 +4460,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
           style: { background: `${a.color}08` }
         },
         /* @__PURE__ */ React.createElement(AreaIcon, { area: a.area, size: 16 }),
-        /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-lg font-medium", style: { color: a.color } }, a.area),
+        /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-xl font-bold", style: { color: a.color } }, a.area),
         !a.viva && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] px-1.5 py-0.5 rounded-full", style: { background: `${COLOR_OBSOLETO}20`, color: COLOR_OBSOLETO } }, "fuera de I have a dream"),
         /* @__PURE__ */ React.createElement("span", { className: `text-xs ml-auto ${vacia ? "text-neutral-300 dark:text-neutral-700 italic" : "text-neutral-400"}` }, vacia ? "sin objetivos esta semana" : `${nItems} objetivo${nItems === 1 ? "" : "s"}`),
         botonMas(a.area, "", "", a.color, `Nuevo objetivo en ${a.area}`)
@@ -4442,7 +4471,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
         return /* @__PURE__ */ React.createElement("div", { key: sec.nombre, className: `p-3.5 ${nSec === 0 ? "opacity-60" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide mb-2 font-medium flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "w-2 h-2 rounded-full shrink-0", style: { background: sec.color } }), /* @__PURE__ */ React.createElement("span", { style: { color: sec.color } }, sec.nombre), nSec === 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-300 dark:text-neutral-700 normal-case tracking-normal" }, "\u2014 vac\xEDa"), botonMas(a.area, sec.nombre, "", sec.color, `Nuevo objetivo en ${a.area} \u203A ${sec.nombre}`)), formularioSi(a.area, sec.nombre, ""), sec.items.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, sec.items.map((o) => fila(o, sec.color, a))), sec.subsecciones.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.nombre, className: "mt-2 pl-3 border-l-2", style: { borderColor: `${sec.color}33` } }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] mb-1 flex items-center gap-1.5", style: { color: sec.color, opacity: 0.85 } }, /* @__PURE__ */ React.createElement("span", null, sub.nombre), sub.items.length === 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-300 dark:text-neutral-700" }, "\u2014 vac\xEDa"), botonMas(a.area, sec.nombre, sub.nombre, sec.color, `Nuevo objetivo en ${a.area} \u203A ${sec.nombre} \u203A ${sub.nombre}`)), formularioSi(a.area, sec.nombre, sub.nombre), sub.items.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, sub.items.map((o) => fila(o, sec.color, a))))));
       }), a.secciones.length === 0 && a.sinSeccion.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "p-3.5 text-xs text-neutral-400 italic" }, 'Esta \xE1rea todav\xEDa no tiene secciones en "I have a dream". Pod\xE9s crear igual un objetivo suelto con el +.'))
     );
-  }), estructura.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-center py-10 text-neutral-400 text-sm" }, 'No hay \xE1reas definidas. Cre\xE1 las tuyas en "I have a dream".'), (archivados.length > 0 || huerfanos.length > 0) && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 overflow-hidden" }, /* @__PURE__ */ React.createElement(
+  }), estructura.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-center py-10 text-neutral-400 text-sm" }, 'No hay \xE1reas definidas. Cre\xE1 las tuyas en "I have a dream".'), (archivados.length > 0 || huerfanos.length > 0) && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -4758,7 +4787,7 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       ...inicial && inicial.id ? {} : { _aviso: aviso }
     });
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, inicial ? "Editar objetivo" : "Nuevo objetivo"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "1. Categor\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(\xE1reas definidas en Largo plazo)")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, inicial ? "Editar objetivo" : "Nuevo objetivo"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "1. Categor\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(\xE1reas definidas en Largo plazo)")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.key,
@@ -4805,7 +4834,7 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       placeholder: "Armar el \xEDndice\nJuntar la bibliograf\xEDa\nMandarlo a revisi\xF3n",
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm resize-y font-mono"
     }
-  )), franjas.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-amber-200 dark:border-amber-900/60 bg-white/60 dark:bg-neutral-950/40 p-2.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400" }, "Tu rutina ya le dedica horas a esto", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, " \u2014 eleg\xED una y el objetivo se mete ah\xED")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, franjasVisibles.map((f) => {
+  )), franjas.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-amber-200 dark:border-amber-900/60 bg-white dark:bg-neutral-900 p-2.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400" }, "Tu rutina ya le dedica horas a esto", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, " \u2014 eleg\xED una y el objetivo se mete ah\xED")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, franjasVisibles.map((f) => {
     const sel = !!(acople && acople.bloqueId === f.bloqueId && acople.dia === f.dia);
     return /* @__PURE__ */ React.createElement(
       "button",
@@ -5019,7 +5048,7 @@ function PanelDiagnosticoAvisos() {
   };
   const fila = (k, v, tono) => /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-2 py-0.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500 w-36 shrink-0" }, k), /* @__PURE__ */ React.createElement("span", { className: `text-[11px] font-medium ${tono || "text-neutral-700 dark:text-neutral-300"}` }, v));
   const vivo = d.ultimoTick && Date.now() - d.ultimoTick < 9e4;
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-neutral-950/60" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setAbierto(!abierto),
@@ -5147,7 +5176,7 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
     return da !== db ? da - db : String(ma.hora || "").localeCompare(String(mb.hora || ""));
   });
   const DIA_ES = { Sunday: "Dom", Monday: "Lun", Tuesday: "Mar", Wednesday: "Mi\xE9", Thursday: "Jue", Friday: "Vie", Saturday: "S\xE1b" };
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Usted elige actividad por actividad: el casillero ", /* @__PURE__ */ React.createElement("b", null, "\u201CAvisarme antes de que empiece\u201D"), "dentro del formulario que crea la actividad, o la campanita \u{1F514} al lado de cualquier actividad ya creada. Lo de la rutina avisa ", /* @__PURE__ */ React.createElement("b", null, "todas las semanas"), " ese d\xEDa a esa hora; un", /* @__PURE__ */ React.createElement("b", null, "evento"), " avisa ", /* @__PURE__ */ React.createElement("b", null, "una sola vez"), ", el d\xEDa de su fecha."), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, /* @__PURE__ */ React.createElement("b", null, "Lo que hay que saber:"), " esto es una notificaci\xF3n del navegador, as\xED que", /* @__PURE__ */ React.createElement("b", null, " s\xF3lo suena con el dashboard o la app abiertos"), " (aunque est\xE9n en segundo plano, mientras el aparato no los haya dormido). Si a la hora del aviso la app estaba cerrada, al volver a abrirla el aviso llega igual si no pas\xF3 m\xE1s de media hora, diciendo que llega tarde.", /* @__PURE__ */ React.createElement("b", null, " Para que suene con todo cerrado hay un solo camino: el bot\xF3n del Calendario, ac\xE1 abajo"), " \u2014 esas alarmas las tira el celular, no la p\xE1gina. Las marcas se sincronizan entre sus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Recordatorios"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-500 dark:text-neutral-400 mt-1" }, "La campanita y el registro de lo que Jarvis te avis\xF3.")), window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Usted elige actividad por actividad: el casillero ", /* @__PURE__ */ React.createElement("b", null, "\u201CAvisarme antes de que empiece\u201D"), "dentro del formulario que crea la actividad, o la campanita \u{1F514} al lado de cualquier actividad ya creada. Lo de la rutina avisa ", /* @__PURE__ */ React.createElement("b", null, "todas las semanas"), " ese d\xEDa a esa hora; un", /* @__PURE__ */ React.createElement("b", null, "evento"), " avisa ", /* @__PURE__ */ React.createElement("b", null, "una sola vez"), ", el d\xEDa de su fecha."), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, /* @__PURE__ */ React.createElement("b", null, "Lo que hay que saber:"), " esto es una notificaci\xF3n del navegador, as\xED que", /* @__PURE__ */ React.createElement("b", null, " s\xF3lo suena con el dashboard o la app abiertos"), " (aunque est\xE9n en segundo plano, mientras el aparato no los haya dormido). Si a la hora del aviso la app estaba cerrada, al volver a abrirla el aviso llega igual si no pas\xF3 m\xE1s de media hora, diciendo que llega tarde.", /* @__PURE__ */ React.createElement("b", null, " Para que suene con todo cerrado hay un solo camino: el bot\xF3n del Calendario, ac\xE1 abajo"), " \u2014 esas alarmas las tira el celular, no la p\xE1gina. Las marcas se sincronizan entre sus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => window.JarvisNotif.pedirPermiso().then(() => setNotifTick((t) => t + 1)),
@@ -5209,7 +5238,7 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
     },
     /* @__PURE__ */ React.createElement(CalendarPlus, { size: 13 }),
     " Mandar las marcadas al Calendario (.ics)"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-3" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-emerald-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Canal de recordatorios")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-2" }, /* @__PURE__ */ React.createElement(
+  )))), /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-3" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-emerald-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Canal de recordatorios")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setCanalConfig({ ...canalConfig, tipo: "whatsapp" }),
@@ -5241,11 +5270,11 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
       placeholder: "Ej: @martingomezp",
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     }
-  )), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Brain, { size: 14, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, "Aprendizaje por \xE1reas")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-600" }, totalFeedback, "/100")), /* @__PURE__ */ React.createElement("div", { className: "h-1.5 bg-amber-100 dark:bg-amber-950/50 rounded-full overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full bg-amber-500", style: { width: `${Math.min(100, totalFeedback)}%` } }))), urgentes.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-center py-10 text-neutral-400 text-sm" }, "No hay urgentes por ahora. Descans\xE1."), urgentes.map((o) => {
+  )), /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Brain, { size: 14, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, "Aprendizaje por \xE1reas")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-600" }, totalFeedback, "/100")), /* @__PURE__ */ React.createElement("div", { className: "h-1.5 bg-amber-100 dark:bg-amber-950/50 rounded-full overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full bg-amber-500", style: { width: `${Math.min(100, totalFeedback)}%` } }))), urgentes.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-center py-10 text-neutral-400 text-sm" }, "No hay urgentes por ahora. Descans\xE1."), urgentes.map((o) => {
     const fb = feedback[o.id] || {};
     const categoriaActual = fb.categoriaCorregida || o.categoria;
     const titulo = o.tarea || o.subseccion || o.seccion;
-    return /* @__PURE__ */ React.createElement("div", { key: o.id, className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-3" }, /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { key: o.id, className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-3" }, /* @__PURE__ */ React.createElement(
       "div",
       {
         className: "w-9 h-9 rounded-full flex items-center justify-center shrink-0",
@@ -5310,7 +5339,7 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
   }));
 }
 function Lecturas({ librosLeidos, setLibrosLeidos }) {
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-4" }, /* @__PURE__ */ React.createElement(BookOpen, { size: 18, className: "text-purple-500" }), /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-xl font-medium" }, "Libros pr\xF3ximos")), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, LIBROS.map((l, i) => /* @__PURE__ */ React.createElement("label", { key: i, className: "flex items-center gap-2.5 text-sm cursor-pointer p-2 rounded hover:bg-neutral-50 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-4" }, /* @__PURE__ */ React.createElement(BookOpen, { size: 18, className: "text-purple-500" }), /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Libros pr\xF3ximos")), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, LIBROS.map((l, i) => /* @__PURE__ */ React.createElement("label", { key: i, className: "flex items-center gap-2.5 text-sm cursor-pointer p-2 rounded hover:bg-neutral-50 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "checkbox",
@@ -5359,7 +5388,7 @@ function TareasWhatsApp() {
     return "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400";
   };
   const categoryLabel = (c) => c === "event" ? "Evento" : c === "reminder" ? "Recordatorio" : "Tarea";
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(MessageCircle, { size: 18, className: "text-emerald-500" }), /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-xl font-medium" }, "Tareas de WhatsApp"), (data == null ? void 0 : data.generated_at) && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "\xB7 actualizado ", new Date(data.generated_at).toLocaleString("es-AR"))), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(MessageCircle, { size: 18, className: "text-emerald-500" }), /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "WhatsApp"), (data == null ? void 0 : data.generated_at) && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "\xB7 actualizado ", new Date(data.generated_at).toLocaleString("es-AR"))), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: fetchTasks,
@@ -5623,7 +5652,7 @@ function PanelRecurrentes({ now, recs, setRecs, objetivos, taxonomia }) {
       return /* @__PURE__ */ React.createElement("label", { key: st.id, className: "flex items-start gap-1.5 text-xs cursor-pointer" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ok, onChange: () => toggleSub(r, st.id), className: "mt-0.5 w-3 h-3", style: { accentColor: getAreaColor(r.categoria) } }), /* @__PURE__ */ React.createElement("span", { className: ok ? "line-through text-neutral-400" : "text-neutral-600 dark:text-neutral-300" }, st.titulo));
     })));
   }), items.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400 italic p-1.5" }, "Nada por ac\xE1.")));
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-orange-200 dark:border-orange-900/40 bg-orange-50/40 dark:bg-orange-950/10 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15, className: "text-orange-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Recurrentes"), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "mes ", mo, " \xB7 semana ", wk.split("-")[1], pendMes + pendSem > 0 ? ` \xB7 ${pendMes + pendSem} pendientes` : " \xB7 todo al d\xEDa \u2713")), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-orange-200 dark:border-orange-900/40 bg-orange-50/40 dark:bg-orange-950/10 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 15, className: "text-orange-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Recurrentes"), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "mes ", mo, " \xB7 semana ", wk.split("-")[1], pendMes + pendSem > 0 ? ` \xB7 ${pendMes + pendSem} pendientes` : " \xB7 todo al d\xEDa \u2713")), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
@@ -5789,7 +5818,7 @@ function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, week
     /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-1" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] font-medium flex items-center gap-1", style: { color: getAreaColor(o.categoria) } }, /* @__PURE__ */ React.createElement(AreaIcon, { area: o.categoria, size: 10 }), " ", o.seccion || o.categoria, o.prioridad === "urgente" && /* @__PURE__ */ React.createElement(Flame, { size: 10, className: "text-red-500" })), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-800 dark:text-neutral-200 leading-snug mt-0.5" }, o.tarea || o.subseccion || o.seccion), enDia && o.hora && /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400 font-mono mt-0.5" }, o.hora)), enDia && /* @__PURE__ */ React.createElement("button", { onClick: () => asignarObjetivo(o.id, null, null), title: "Volver al pool", className: "jarvis-acciones p-0.5 text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 shrink-0" }, /* @__PURE__ */ React.createElement(X, { size: 12 }))),
     !enDia && /* @__PURE__ */ React.createElement("div", { className: "flex gap-0.5 mt-1.5" }, DIAS.map((d) => /* @__PURE__ */ React.createElement("button", { key: d.key, onClick: () => asignarObjetivo(o.id, d.key, null), title: `Asignar al ${d.full}`, className: "flex-1 text-[9px] py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 text-neutral-500 hover:bg-neutral-900 hover:text-white dark:hover:bg-neutral-100 dark:hover:text-neutral-900 transition-colors" }, d.es[0])))
   );
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Organizar"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Vista mensual del calendario o tablero de la semana. Ac\xE1 se cargan los ", /* @__PURE__ */ React.createElement("b", null, "eventos"), " \u2014lo que pasa una vez, en una fecha: una rendida, un turno m\xE9dico\u2014 y las recurrentes. Todo fluye a Mi d\xEDa y a Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden" }, [{ k: "mes", label: "Mes" }, { k: "semana", label: "Semana" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.k, onClick: () => setVistaOrg(v.k), className: `text-xs px-3 py-1.5 font-medium ${vistaOrg === v.k ? "bg-amber-500 text-neutral-950" : "text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-900"}` }, v.label))), agregarEvento && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Organizar"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Vista mensual del calendario o tablero de la semana. Ac\xE1 se cargan los ", /* @__PURE__ */ React.createElement("b", null, "eventos"), " \u2014lo que pasa una vez, en una fecha: una rendida, un turno m\xE9dico\u2014 y las recurrentes. Todo fluye a Mi d\xEDa y a Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden" }, [{ k: "mes", label: "Mes" }, { k: "semana", label: "Semana" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.k, onClick: () => setVistaOrg(v.k), className: `text-xs px-3 py-1.5 font-medium ${vistaOrg === v.k ? "bg-amber-500 text-neutral-950" : "text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-900"}` }, v.label))), agregarEvento && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
@@ -5823,10 +5852,10 @@ function OrganizarSemana({ objetivos, objetivosVista, asignarObjetivo, now, week
   ), vistaOrg === "mes" ? /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setMesOffset(mesOffset - 1);
     setDetKey(null);
-  }, className: "p-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16, className: "rotate-180" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg font-medium capitalize" }, mesLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+  }, className: "p-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16, className: "rotate-180" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-xl font-bold capitalize" }, mesLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setMesOffset(mesOffset + 1);
     setDetKey(null);
-  }, className: "p-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16 }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden bg-white dark:bg-neutral-950" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 bg-neutral-50 dark:bg-neutral-900 text-[10px] uppercase tracking-wide text-neutral-500 font-medium" }, ["Lun", "Mar", "Mi\xE9", "Jue", "Vie", "S\xE1b", "Dom"].map((d) => /* @__PURE__ */ React.createElement("div", { key: d, className: "text-center py-1.5 border-r last:border-r-0 border-neutral-200 dark:border-neutral-800" }, d))), semanasMes.map((week, wi) => /* @__PURE__ */ React.createElement("div", { key: wi, className: "grid grid-cols-7 border-t border-neutral-200 dark:border-neutral-800" }, week.map((date) => {
+  }, className: "p-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(ChevronRight, { size: 16 }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 overflow-hidden bg-white dark:bg-neutral-900" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 bg-neutral-50 dark:bg-neutral-900 text-[10px] uppercase tracking-wide text-neutral-500 font-medium" }, ["Lun", "Mar", "Mi\xE9", "Jue", "Vie", "S\xE1b", "Dom"].map((d) => /* @__PURE__ */ React.createElement("div", { key: d, className: "text-center py-1.5 border-r last:border-r-0 border-neutral-200 dark:border-neutral-800" }, d))), semanasMes.map((week, wi) => /* @__PURE__ */ React.createElement("div", { key: wi, className: "grid grid-cols-7 border-t border-neutral-200 dark:border-neutral-800" }, week.map((date) => {
     const inMonth = date.getMonth() === baseMes.getMonth();
     const isToday = date.toDateString() === now.toDateString();
     const items = itemsForDate(date);
@@ -5860,7 +5889,7 @@ ${itemTitulo(it)}${it.hora ? ` \xB7 ${it.hora}` : ""}`
     const items = itemsForDate(date);
     const wkd = DIAS[date.getDay()].key;
     const inCurrentWeek = weekDates.some((w) => w.toDateString() === date.toDateString());
-    return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "font-medium text-sm capitalize" }, date.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })), inCurrentWeek && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "font-medium text-sm capitalize" }, date.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })), inCurrentWeek && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setSelectedDay(wkd);
       setTab("dia");
     }, className: "text-xs px-2.5 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900" }, "Ver en Mi d\xEDa \u2192")), items.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-400 italic" }, "Sin tareas ese d\xEDa.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, items.map((o) => /* @__PURE__ */ React.createElement("div", { key: o.id, className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "w-1.5 h-1.5 rounded-full shrink-0", style: { background: getAreaColor(o.categoria) } }), /* @__PURE__ */ React.createElement("span", { className: "text-[11px]", style: { color: getAreaColor(o.categoria) } }, o.seccion || o.categoria), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-300" }, "\u203A"), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, itemTitulo(o)), o.hora && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-neutral-400 font-mono ml-auto" }, o.hora), o.esRecurrente && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-orange-500 ml-1" }, "recurrente"), o.esEvento && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-sky-500 ml-1" }, "evento"), editarEvento && /* @__PURE__ */ React.createElement(
@@ -5880,7 +5909,7 @@ ${itemTitulo(it)}${it.hora ? ` \xB7 ${it.hora}` : ""}`
       /* @__PURE__ */ React.createElement(Plus, { size: 13 }),
       " Cargar un evento ese d\xEDa"
     ));
-  })()) : /* @__PURE__ */ React.createElement("div", { className: "grid gap-4", style: { gridTemplateColumns: "minmax(230px, 300px) 1fr" } }, /* @__PURE__ */ React.createElement("div", { onDragOver: (e) => e.preventDefault(), onDrop: onDropPool, className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/30 p-3 self-start" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mb-2" }, /* @__PURE__ */ React.createElement(ClipboardList, { size: 14, className: "text-neutral-500" }), /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-medium" }, "Sin asignar"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-400" }, "(", pool.length, ")")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 mb-2.5" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFiltroCat(null), className: `text-[10px] px-1.5 py-0.5 rounded-full border ${!filtroCat ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 border-transparent" : "border-neutral-200 dark:border-neutral-700 text-neutral-500"}` }, "Todas"), areaList.filter((a) => pendientes.some((o) => !o.dia && o.categoria === a.key)).map((a) => /* @__PURE__ */ React.createElement(
+  })()) : /* @__PURE__ */ React.createElement("div", { className: "grid gap-4", style: { gridTemplateColumns: "minmax(230px, 300px) 1fr" } }, /* @__PURE__ */ React.createElement("div", { onDragOver: (e) => e.preventDefault(), onDrop: onDropPool, className: "rounded-2xl border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/30 p-3 self-start" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mb-2" }, /* @__PURE__ */ React.createElement(ClipboardList, { size: 14, className: "text-neutral-500" }), /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-medium" }, "Sin asignar"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-400" }, "(", pool.length, ")")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 mb-2.5" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFiltroCat(null), className: `text-[10px] px-1.5 py-0.5 rounded-full border ${!filtroCat ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 border-transparent" : "border-neutral-200 dark:border-neutral-700 text-neutral-500"}` }, "Todas"), areaList.filter((a) => pendientes.some((o) => !o.dia && o.categoria === a.key)).map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.key,
@@ -5982,7 +6011,7 @@ function TareaRutinaForm({ inicial, onGuardar, onCancelar, onEliminar, objetivos
       onGuardar({ categoria, seccion: seccion.trim(), subseccion: subseccion.trim(), tarea: tarea.trim(), hora, duracion, subtareas, _aviso });
     }
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-4 space-y-3", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-orange-700 dark:text-orange-300 font-medium" }, tituloForm || "Nueva actividad de rutina"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "1. Categor\xEDa (\xE1rea)"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-4 space-y-3", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-orange-700 dark:text-orange-300 font-medium" }, tituloForm || "Nueva actividad de rutina"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "1. Categor\xEDa (\xE1rea)"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.key,
@@ -6089,7 +6118,7 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
     "\xD7"
   );
   const selDayFull = ((_a = DIAS.find((d) => d.key === sel)) == null ? void 0 : _a.full) || "";
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Rutina \u2014 columna vertebral"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, /* @__PURE__ */ React.createElement("strong", null, "General"), ": actividades que se repiten en los d\xEDas que marques. ", /* @__PURE__ */ React.createElement("strong", null, "Cada d\xEDa"), ": lo espec\xEDfico de esa jornada. Edit\xE1 cualquier tarea con su clasificaci\xF3n y movela/repetila en otros d\xEDas. Todo se ve en Mi d\xEDa y en Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-1" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Rutina"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, /* @__PURE__ */ React.createElement("strong", null, "General"), ": actividades que se repiten en los d\xEDas que marques. ", /* @__PURE__ */ React.createElement("strong", null, "Cada d\xEDa"), ": lo espec\xEDfico de esa jornada. Edit\xE1 cualquier tarea con su clasificaci\xF3n y movela/repetila en otros d\xEDas. Todo se ve en Mi d\xEDa y en Semana.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-1" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
@@ -6120,7 +6149,7 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
       d.full,
       nCh > 0 && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isSelected ? "bg-red-600 text-white" : "bg-red-600 text-white"}` }, "\u26A0 ", nCh)
     );
-  })), esGeneral && /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/10 p-3 flex items-center justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, (rutinaGeneral || []).length, " actividades generales \xB7 se repiten en los d\xEDas marcados"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "Ordenar por:"), [{ k: "hora", t: "Hora" }, { k: "area", t: "\xC1rea" }].map((op) => /* @__PURE__ */ React.createElement(
+  })), esGeneral && /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/10 p-3 flex items-center justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, (rutinaGeneral || []).length, " actividades generales \xB7 se repiten en los d\xEDas marcados"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "Ordenar por:"), [{ k: "hora", t: "Hora" }, { k: "area", t: "\xC1rea" }].map((op) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: op.k,
@@ -6172,14 +6201,14 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
         }
       ));
     }
-    return /* @__PURE__ */ React.createElement("div", { key: g.id, className: "flex items-start gap-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-3" }, /* @__PURE__ */ React.createElement("div", { className: "w-1 self-stretch rounded-full shrink-0", style: { background: color } }), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-mono font-medium", style: { color } }, g.hora), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500" }, durLabel(g.duracion || 30)), /* @__PURE__ */ React.createElement(AreaIcon, { area: itemArea(g), size: 12 }), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-neutral-400" }, itemSubarea(g))), /* @__PURE__ */ React.createElement("div", { className: "font-medium text-sm mt-0.5" }, itemTitulo(g)), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 mt-1" }, DIAS.filter((d) => (g.dias || []).includes(d.key)).map((d) => {
+    return /* @__PURE__ */ React.createElement("div", { key: g.id, className: "flex items-start gap-3 rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 p-3" }, /* @__PURE__ */ React.createElement("div", { className: "w-1 self-stretch rounded-full shrink-0", style: { background: color } }), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-mono font-medium", style: { color } }, g.hora), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500" }, durLabel(g.duracion || 30)), /* @__PURE__ */ React.createElement(AreaIcon, { area: itemArea(g), size: 12 }), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-neutral-400" }, itemSubarea(g))), /* @__PURE__ */ React.createElement("div", { className: "font-medium text-sm mt-0.5" }, itemTitulo(g)), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 mt-1" }, DIAS.filter((d) => (g.dias || []).includes(d.key)).map((d) => {
       const hv = g.horarios && g.horarios[d.key] || {};
       return /* @__PURE__ */ React.createElement("span", { key: d.key, className: "text-[9px] px-1.5 py-0.5 rounded text-white", style: { background: color } }, d.es, " ", hv.hora || g.hora);
     }))), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setEditandoId(g.id);
       setAddForm(false);
     }, title: "Editar", className: "p-1.5 rounded text-neutral-300 hover:text-orange-500 shrink-0" }, /* @__PURE__ */ React.createElement(Pencil, { size: 14 })));
-  }), (rutinaGeneral || []).length === 0 && !addForm && /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 text-xs text-neutral-400 italic py-4 text-center" }, "Todav\xEDa no ten\xE9s actividades generales. Cre\xE1 una y marc\xE1 en qu\xE9 d\xEDas se repite."))), !esGeneral && /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-3.5 flex items-center gap-4 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm" }, /* @__PURE__ */ React.createElement("b", null, agenda.length), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "actividades"), " \xB7 ", /* @__PURE__ */ React.createElement("b", null, durLabel(totalMin)), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "ocupadas")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, porArea.map(([area, min]) => {
+  }), (rutinaGeneral || []).length === 0 && !addForm && /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 text-xs text-neutral-400 italic py-4 text-center" }, "Todav\xEDa no ten\xE9s actividades generales. Cre\xE1 una y marc\xE1 en qu\xE9 d\xEDas se repite."))), !esGeneral && /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 p-3.5 flex items-center gap-4 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm" }, /* @__PURE__ */ React.createElement("b", null, agenda.length), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "actividades"), " \xB7 ", /* @__PURE__ */ React.createElement("b", null, durLabel(totalMin)), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "ocupadas")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, porArea.map(([area, min]) => {
     const muerta = areaObsoleta(area);
     const c = colorDeBloque(area);
     return /* @__PURE__ */ React.createElement(
@@ -6197,17 +6226,17 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
       durLabel(min),
       muerta ? " \u26A0" : ""
     );
-  }))), choques.length > 0 && !oculto("choques") && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border-2 border-red-400 dark:border-red-800 bg-red-50 dark:bg-red-950/25 p-3.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(AlertCircle, { size: 16, className: "text-red-600 dark:text-red-400 shrink-0" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-red-700 dark:text-red-300" }, "\u26A0 Se est\xE1n pisando ", choques.length, " ", choques.length === 1 ? "par de actividades" : "pares de actividades", " el ", selDayFull.toLowerCase()), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "choques", color: "text-red-500 hover:bg-red-200/60 dark:hover:bg-red-900/40" })), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, choques.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "text-xs bg-white/70 dark:bg-neutral-950/60 rounded-md px-2 py-1.5 flex items-baseline gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.a.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.a.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.a.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400 font-medium" }, "se pisa con"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.b.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.b.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400" }, "\xB7 ", durLabel(c.min), " en com\xFAn")))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-600 dark:text-neutral-400" }, /* @__PURE__ */ React.createElement("b", null, "Las dos quedaron como las guardaste"), ": no se movi\xF3 ni se acort\xF3 ninguna. Si una tiene que correrse, abrila con el lapicito y cambiale la hora vos.")), (() => {
+  }))), choques.length > 0 && !oculto("choques") && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-red-400 dark:border-red-800 bg-red-50 dark:bg-red-950/25 p-3.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(AlertCircle, { size: 16, className: "text-red-600 dark:text-red-400 shrink-0" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-red-700 dark:text-red-300" }, "\u26A0 Se est\xE1n pisando ", choques.length, " ", choques.length === 1 ? "par de actividades" : "pares de actividades", " el ", selDayFull.toLowerCase()), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "choques", color: "text-red-500 hover:bg-red-200/60 dark:hover:bg-red-900/40" })), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, choques.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "text-xs bg-white dark:bg-neutral-900 rounded-md px-2 py-1.5 flex items-baseline gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.a.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.a.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.a.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400 font-medium" }, "se pisa con"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, c.b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium" }, c.b.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(", durLabel(c.b.duracion || 0), ")"), /* @__PURE__ */ React.createElement("span", { className: "text-red-600 dark:text-red-400" }, "\xB7 ", durLabel(c.min), " en com\xFAn")))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-600 dark:text-neutral-400" }, /* @__PURE__ */ React.createElement("b", null, "Las dos quedaron como las guardaste"), ": no se movi\xF3 ni se acort\xF3 ninguna. Si una tiene que correrse, abrila con el lapicito y cambiale la hora vos.")), (() => {
     const { editadas, propias, ocultos, hay } = capasDatos;
     if (!hay || oculto("capas")) return null;
-    return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-amber-300/50 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/15 p-3 space-y-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Layers, { size: 14, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-amber-700 dark:text-amber-300" }, "Capas \u2014 qu\xE9 se guard\xF3 encima de tu rutina el ", selDayFull.toLowerCase()), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "capas", color: "text-amber-600 hover:bg-amber-200/60 dark:hover:bg-amber-900/40" })), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 -mt-1" }, "No habla de horarios cruzados: son cambios guardados sobre la estructura base."), editadas.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 mb-1" }, /* @__PURE__ */ React.createElement("strong", null, editadas.length), ' edici\xF3n(es) permanente(s) sobre la rutina. Una concreci\xF3n hecha en Semana NO deber\xEDa llegar ac\xE1: si reconoc\xE9s alguna de estas como "lo que iba a hacer esa semana", deshacela.'), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, editadas.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.id, className: "flex items-center gap-2 text-xs bg-white/60 dark:bg-neutral-950/60 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium truncate" }, b.titulo), /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-amber-300/50 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/15 p-3 space-y-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Layers, { size: 14, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-amber-700 dark:text-amber-300" }, "Capas \u2014 qu\xE9 se guard\xF3 encima de tu rutina el ", selDayFull.toLowerCase()), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "capas", color: "text-amber-600 hover:bg-amber-200/60 dark:hover:bg-amber-900/40" })), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 -mt-1" }, "No habla de horarios cruzados: son cambios guardados sobre la estructura base."), editadas.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 mb-1" }, /* @__PURE__ */ React.createElement("strong", null, editadas.length), ' edici\xF3n(es) permanente(s) sobre la rutina. Una concreci\xF3n hecha en Semana NO deber\xEDa llegar ac\xE1: si reconoc\xE9s alguna de estas como "lo que iba a hacer esa semana", deshacela.'), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, editadas.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.id, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-900 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium truncate" }, b.titulo), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => quitarOverrideRutina && quitarOverrideRutina(sel, b.id),
         className: "ml-auto shrink-0 text-[11px] px-2 py-0.5 rounded border border-amber-400/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100/60 dark:hover:bg-amber-900/30"
       },
       "Deshacer edici\xF3n"
-    ))))), propias.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 mb-1" }, /* @__PURE__ */ React.createElement("strong", null, propias.length), " actividad(es) propia(s) definidas ac\xE1 (no vienen del Sheets). Si alguna era solo para una semana, movela a la semana y sale de la rutina."), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, propias.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.id, className: "flex items-center gap-2 text-xs bg-white/60 dark:bg-neutral-950/60 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium truncate" }, b.titulo), /* @__PURE__ */ React.createElement(
+    ))))), propias.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 mb-1" }, /* @__PURE__ */ React.createElement("strong", null, propias.length), " actividad(es) propia(s) definidas ac\xE1 (no vienen del Sheets). Si alguna era solo para una semana, movela a la semana y sale de la rutina."), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, propias.map((b) => /* @__PURE__ */ React.createElement("div", { key: b.id, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-900 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-mono text-neutral-500 shrink-0" }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "font-medium truncate" }, b.titulo), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => moverBloqueASemana && moverBloqueASemana(sel, b.id),
@@ -6223,7 +6252,7 @@ function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, edit
       },
       "Reponerlas"
     )));
-  })(), obsoletos.length > 0 && !oculto("obsoletos") && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border p-3 text-xs", style: { borderColor: `${COLOR_OBSOLETO}66`, background: `${COLOR_OBSOLETO}10` } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium", style: { color: COLOR_OBSOLETO } }, "\u26A0 ", obsoletos.length, " ", obsoletos.length === 1 ? "actividad usa un \xE1rea" : "actividades usan \xE1reas", " que ya no existe", obsoletos.length === 1 ? "" : "n", ":"), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, areasObsoletas.join(" \xB7 "))), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "obsoletos", color: "text-neutral-400 hover:bg-neutral-200/60 dark:hover:bg-neutral-800" })), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-400 mt-1" }, "Vienen del Sheets o de la rutina vieja. Abrilas con el lapicito y asignales un \xE1rea actual \u2014 hasta entonces se muestran en gris ac\xE1 y en Semana.")), descartadosAca.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 flex items-center gap-2 flex-wrap px-1" }, /* @__PURE__ */ React.createElement("span", null, descartadosAca.length, " aviso(s) descartado(s) en ", selDayFull.toLowerCase(), ":", " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, descartadosAca.map((t) => AVISOS[t].titulo).join(" \xB7 "))), /* @__PURE__ */ React.createElement(
+  })(), obsoletos.length > 0 && !oculto("obsoletos") && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border p-3 text-xs", style: { borderColor: `${COLOR_OBSOLETO}66`, background: `${COLOR_OBSOLETO}10` } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium", style: { color: COLOR_OBSOLETO } }, "\u26A0 ", obsoletos.length, " ", obsoletos.length === 1 ? "actividad usa un \xE1rea" : "actividades usan \xE1reas", " que ya no existe", obsoletos.length === 1 ? "" : "n", ":"), " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, areasObsoletas.join(" \xB7 "))), /* @__PURE__ */ React.createElement(BotonDescartar, { tipo: "obsoletos", color: "text-neutral-400 hover:bg-neutral-200/60 dark:hover:bg-neutral-800" })), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-400 mt-1" }, "Vienen del Sheets o de la rutina vieja. Abrilas con el lapicito y asignales un \xE1rea actual \u2014 hasta entonces se muestran en gris ac\xE1 y en Semana.")), descartadosAca.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 flex items-center gap-2 flex-wrap px-1" }, /* @__PURE__ */ React.createElement("span", null, descartadosAca.length, " aviso(s) descartado(s) en ", selDayFull.toLowerCase(), ":", " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, descartadosAca.map((t) => AVISOS[t].titulo).join(" \xB7 "))), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => restaurarAvisos && restaurarAvisos(sel),
@@ -6269,7 +6298,7 @@ Sigue estando en: ${DIAS.filter((d) => otros.includes(d.key)).map((d) => d.full)
         }
       ));
     }
-    return /* @__PURE__ */ React.createElement("div", { key: b.id, className: "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-3 flex items-start gap-3" }, /* @__PURE__ */ React.createElement("div", { className: "w-1 self-stretch rounded-full shrink-0", style: { background: color } }), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-mono font-medium", style: { color } }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-400" }, "\xB7"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500" }, durLabel(b.duracion)), /* @__PURE__ */ React.createElement(AreaIcon, { area: b.area, size: 12 }), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-neutral-400" }, b.subarea || b.area), muerta && /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { key: b.id, className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 p-3 flex items-start gap-3" }, /* @__PURE__ */ React.createElement("div", { className: "w-1 self-stretch rounded-full shrink-0", style: { background: color } }), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-mono font-medium", style: { color } }, b.hora), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-400" }, "\xB7"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500" }, durLabel(b.duracion)), /* @__PURE__ */ React.createElement(AreaIcon, { area: b.area, size: 12 }), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-neutral-400" }, b.subarea || b.area), muerta && /* @__PURE__ */ React.createElement(
       "span",
       {
         className: "text-[9px] px-1.5 py-0.5 rounded-full",
@@ -7004,7 +7033,7 @@ function PanelObjetivoLP({ modelo, inicial, padreSugerido, onGuardar, onCancelar
     background: activo ? "var(--accent)" : tok ? areaBg(tok) : "var(--col-2)",
     color: activo ? "var(--on-solid)" : tok ? areaFg(tok) : "var(--text-secondary)"
   });
-  return /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--text-muted)", marginBottom: 12 } }, inicial ? "Editar objetivo" : "Nuevo objetivo"), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement(LpLabel, null, "\xC1rea de vida"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, areas.map((a) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--text-muted)", marginBottom: 12 } }, inicial ? "Editar objetivo" : "Nuevo objetivo"), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement(LpLabel, null, "\xC1rea de vida"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, areas.map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.id,
@@ -7606,7 +7635,7 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
     });
     return out;
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "lp-view space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "I have a dream"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "El rumbo de cada \xE1rea de tu vida. Los hitos miden el avance; bajalos a la semana para ejecutarlos.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 items-center" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "lp-view space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "I have a dream"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "El rumbo de cada \xE1rea de tu vida. Los hitos miden el avance; bajalos a la semana para ejecutarlos.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 items-center" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -7642,7 +7671,7 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
         setPadreNuevo(null);
       }
     }
-  )), /* @__PURE__ */ React.createElement(OrganizacionEditor, { modelo, aplicar }), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between", style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Trophy, { size: 15, style: { color: "var(--accent)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, "Avance general")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--accent)" } }, avanceGlobal, "%")), /* @__PURE__ */ React.createElement("div", { style: { height: 3, borderRadius: 999, background: "var(--col-2)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: avanceGlobal + "%", background: "var(--accent)" } })), cumplidos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--success)", background: "var(--success-bg)", borderRadius: 999, padding: "2px 8px", display: "inline-block", marginTop: 10 } }, cumplidos.length, " cumplido", cumplidos.length > 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { className: "lp-scroll" }, /* @__PURE__ */ React.createElement("div", { className: "lp-min space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex lp-etiquetas", style: { fontSize: 11, fontWeight: 400, color: "var(--text-muted)", paddingLeft: 4, gap: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_AREA, flexShrink: 0 } }, "\xC1rea"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SEC, flexShrink: 0 } }, "Secci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SUB, flexShrink: 0 } }, "Subsecci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Objetivos")), areas.map((a) => {
+  )), /* @__PURE__ */ React.createElement(OrganizacionEditor, { modelo, aplicar }), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between", style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Trophy, { size: 15, style: { color: "var(--accent)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, "Avance general")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--accent)" } }, avanceGlobal, "%")), /* @__PURE__ */ React.createElement("div", { style: { height: 3, borderRadius: 999, background: "var(--col-2)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: avanceGlobal + "%", background: "var(--accent)" } })), cumplidos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--success)", background: "var(--success-bg)", borderRadius: 999, padding: "2px 8px", display: "inline-block", marginTop: 10 } }, cumplidos.length, " cumplido", cumplidos.length > 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { className: "lp-scroll" }, /* @__PURE__ */ React.createElement("div", { className: "lp-min space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex lp-etiquetas", style: { fontSize: 11, fontWeight: 400, color: "var(--text-muted)", paddingLeft: 4, gap: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_AREA, flexShrink: 0 } }, "\xC1rea"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SEC, flexShrink: 0 } }, "Secci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SUB, flexShrink: 0 } }, "Subsecci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Objetivos")), areas.map((a) => {
     const secs = ordLP((modelo.secciones || []).filter((s) => s.areaId === a.id));
     const objsDirectos = ordLP(objetivos.filter((o) => o.padreTipo === "area" && o.padreId === a.id));
     const d = lpDescendientes(modelo, "area", a.id);
@@ -7758,7 +7787,7 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
       },
       onCancelar: () => setMoverObj(null)
     }
-  )))))), (cumplidos.length > 0 || logHitos.length > 0) && /* @__PURE__ */ React.createElement("div", { style: { background: "var(--success-bg)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2", style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement(Trophy, { size: 15, style: { color: "var(--success)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, "Registro de cumplidos")), cumplidos.map((o) => {
+  )))))), (cumplidos.length > 0 || logHitos.length > 0) && /* @__PURE__ */ React.createElement("div", { style: { background: "var(--success-bg)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2", style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement(Trophy, { size: 15, style: { color: "var(--success)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, "Registro de cumplidos")), cumplidos.map((o) => {
     const r = rutaLP(modelo, o);
     return /* @__PURE__ */ React.createElement("div", { key: o.id, className: "flex items-center gap-2", style: { fontSize: 13, color: "var(--text-primary)", padding: "2px 0" } }, /* @__PURE__ */ React.createElement(CircleCheck, { size: 14, style: { color: "var(--success)", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 400 } }, o.titulo), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, [r.area, r.seccion].filter(Boolean).join(" \u203A "), " \xB7 ", o.fecha_completado || ""), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement(LpBotonTexto, { onClick: () => setObjetivo(o.id, { completado: false, fecha_completado: null }) }, "reabrir"));
   }), logHitos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--text-muted)", marginBottom: 4 } }, "Hitos completados"), logHitos.slice(0, 30).map((l, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex items-center gap-2", style: { fontSize: 12, color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--success)" } }, "\u2713"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, l.fecha), /* @__PURE__ */ React.createElement("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, l.objetivo, " \u2014 ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-primary)" } }, l.hito)))))), undo && /* @__PURE__ */ React.createElement("div", { style: {
@@ -7803,10 +7832,10 @@ function BotonTema() {
     {
       onClick: cambiar,
       title: oscuro ? "Cambiar a modo claro" : "Cambiar a modo oscuro",
-      className: "flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600 hover:border-amber-300 transition-colors"
+      className: "flex flex-col items-center justify-center gap-0.5 min-w-[52px] min-h-[44px] px-2.5 py-1.5 rounded-xl border border-transparent bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
     },
     oscuro ? /* @__PURE__ */ React.createElement(Sun, { size: 15 }) : /* @__PURE__ */ React.createElement(Moon, { size: 15 }),
-    /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none" }, oscuro ? "Claro" : "Oscuro")
+    /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide leading-none" }, oscuro ? "Claro" : "Oscuro")
   );
 }
 function UsuarioControl() {
@@ -7819,11 +7848,11 @@ function UsuarioControl() {
     {
       onClick: () => setAbierto((v) => !v),
       title: u.email,
-      className: "flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900"
+      className: "flex flex-col items-center justify-center gap-0.5 min-w-[52px] min-h-[44px] px-2.5 py-1.5 rounded-xl border border-transparent bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition-colors hover:bg-neutral-200 dark:hover:bg-neutral-700"
     },
     u.foto ? /* @__PURE__ */ React.createElement("img", { src: u.foto, alt: "", referrerPolicy: "no-referrer", className: "w-4 h-4 rounded-full" }) : /* @__PURE__ */ React.createElement("span", { className: "w-4 h-4 rounded-full bg-neutral-300 dark:bg-neutral-700 text-[10px] leading-4 text-center" }, inicial),
-    /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none max-w-[74px] truncate" }, (u.nombre || "Cuenta").split(" ")[0])
-  ), abierto && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-40", onClick: () => setAbierto(false) }), /* @__PURE__ */ React.createElement("div", { className: "jarvis-materializar absolute right-0 top-full mt-1 z-50 w-60 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-3 text-left" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium truncate text-neutral-800 dark:text-neutral-200" }, u.nombre), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 truncate" }, u.email), /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400 mt-2 mb-2.5 leading-snug" }, "Tu informaci\xF3n es s\xF3lo tuya: nadie m\xE1s de la familia la ve."), /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide leading-none max-w-[74px] truncate" }, (u.nombre || "Cuenta").split(" ")[0])
+  ), abierto && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-40", onClick: () => setAbierto(false) }), /* @__PURE__ */ React.createElement("div", { className: "jarvis-materializar absolute right-0 top-full mt-1 z-50 w-60 rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 shadow-xl p-3 text-left" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium truncate text-neutral-800 dark:text-neutral-200" }, u.nombre), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500 truncate" }, u.email), /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-400 mt-2 mb-2.5 leading-snug" }, "Tu informaci\xF3n es s\xF3lo tuya: nadie m\xE1s de la familia la ve."), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => u.salir(),
@@ -7863,10 +7892,10 @@ function NubeControl() {
         }
       },
       title,
-      className: `flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-lg border transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900 ${v.cls}`
+      className: `flex flex-col items-center justify-center gap-0.5 min-w-[52px] min-h-[44px] px-2.5 py-1.5 rounded-xl border transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900 ${v.cls}`
     },
     /* @__PURE__ */ React.createElement("span", { className: "text-base" }, v.ico),
-    /* @__PURE__ */ React.createElement("span", { className: "text-[9px] uppercase tracking-wide leading-none max-w-[74px] truncate" }, st.pendientes > 0 ? st.pendientes + " \u2191" : v.txt)
+    /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide leading-none max-w-[74px] truncate" }, st.pendientes > 0 ? st.pendientes + " \u2191" : v.txt)
   );
 }
 function BackupControl() {
@@ -7907,10 +7936,10 @@ function BackupControl() {
       onClick: doConnect,
       disabled: busy,
       title: st.connected ? "Backup en archivo: " + st.name + " \u2014 se guarda solo en cada cambio. Click para cambiar de archivo." : "Eleg\xED o cre\xE1 jarvis_backup.json \u2014 se guarda solo en cada cambio.",
-      className: `flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-lg border transition-colors ${st.connected ? "border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 hover:bg-green-100" : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900"}`
+      className: `flex flex-col items-center justify-center gap-0.5 min-w-[52px] min-h-[44px] px-2.5 py-1.5 rounded-xl border transition-colors ${st.connected ? "border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 hover:bg-green-100" : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900"}`
     },
     /* @__PURE__ */ React.createElement("span", { className: "text-base" }, "\u{1F4BE}"),
-    /* @__PURE__ */ React.createElement("span", { className: `text-[9px] uppercase tracking-wide leading-none max-w-[74px] truncate ${st.connected ? "text-green-700 dark:text-green-400" : "text-neutral-500"}` }, st.connected ? st.name || "Backup" : soportado ? "Conectar" : "Export")
+    /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold uppercase tracking-wide leading-none max-w-[74px] truncate ${st.connected ? "text-green-700 dark:text-green-400" : "text-neutral-500"}` }, st.connected ? st.name || "Backup" : soportado ? "Conectar" : "Export")
   ), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-0.5" }, soportado && /* @__PURE__ */ React.createElement("button", { onClick: doRestore, disabled: busy, title: "Restaurar datos desde el archivo de backup conectado", className: "text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600" }, "Restaurar"), /* @__PURE__ */ React.createElement("button", { onClick: () => window.JarvisBackup.exportCopy(), title: "Descargar una copia del dashboard entero (jarvis_backup.json)", className: "text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600" }, "Copia"), /* @__PURE__ */ React.createElement(
     "label",
     {
@@ -9766,7 +9795,7 @@ function AyudaPestana({ tabKey, etiqueta, onTour }) {
     /* @__PURE__ */ React.createElement(CircleHelp, { size: 13 }),
     " ",
     abierto ? "Cerrar ayuda" : `\xBFC\xF3mo funciona ${etiqueta}?`
-  ), abierto && onTour && /* @__PURE__ */ React.createElement("button", { onClick: onTour, className: "text-xs px-2.5 py-1 rounded-full border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600" }, "Ver el recorrido completo")), abierto && /* @__PURE__ */ React.createElement("div", { className: "mt-2 rounded-xl border border-amber-300/50 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/15 p-3.5 space-y-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-700 dark:text-neutral-300" }, info.que), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium mb-1" }, "Los botones"), /* @__PURE__ */ React.createElement("ul", { className: "space-y-1" }, info.botones.map(([b, d], i) => /* @__PURE__ */ React.createElement("li", { key: i, className: "text-xs text-neutral-600 dark:text-neutral-400 flex gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "w-1 h-1 rounded-full bg-amber-500 shrink-0 mt-1.5" }), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("strong", { className: "text-neutral-800 dark:text-neutral-200" }, b), " \u2014 ", d))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium mb-1" }, "Reglas de oro"), /* @__PURE__ */ React.createElement("ul", { className: "space-y-1" }, info.reglas.map((r, i) => /* @__PURE__ */ React.createElement("li", { key: i, className: "text-xs text-neutral-600 dark:text-neutral-400 flex gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "shrink-0" }, "\u2192"), /* @__PURE__ */ React.createElement("span", null, r)))))));
+  ), abierto && onTour && /* @__PURE__ */ React.createElement("button", { onClick: onTour, className: "text-xs px-2.5 py-1 rounded-full border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600" }, "Ver el recorrido completo")), abierto && /* @__PURE__ */ React.createElement("div", { className: "mt-2 rounded-2xl border border-amber-300/50 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/15 p-3.5 space-y-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-700 dark:text-neutral-300" }, info.que), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium mb-1" }, "Los botones"), /* @__PURE__ */ React.createElement("ul", { className: "space-y-1" }, info.botones.map(([b, d], i) => /* @__PURE__ */ React.createElement("li", { key: i, className: "text-xs text-neutral-600 dark:text-neutral-400 flex gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "w-1 h-1 rounded-full bg-amber-500 shrink-0 mt-1.5" }), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("strong", { className: "text-neutral-800 dark:text-neutral-200" }, b), " \u2014 ", d))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium mb-1" }, "Reglas de oro"), /* @__PURE__ */ React.createElement("ul", { className: "space-y-1" }, info.reglas.map((r, i) => /* @__PURE__ */ React.createElement("li", { key: i, className: "text-xs text-neutral-600 dark:text-neutral-400 flex gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "shrink-0" }, "\u2192"), /* @__PURE__ */ React.createElement("span", null, r)))))));
 }
 const TOUR = [
   { tab: "dia", titulo: "Bienvenido, Se\xF1or", texto: "Este es su puesto de mando. Cuatro pantallas hacen el 90% del trabajo: Mi d\xEDa para ejecutar, Rutina para la estructura, Obj. semanales para lo concreto de la semana y Semana para ver el conjunto. Le muestro cada una en un minuto." },
@@ -10710,7 +10739,7 @@ function App() {
       className: "p-2 -ml-1 rounded-lg border border-neutral-200 dark:border-neutral-800 text-amber-600 dark:text-amber-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"
     },
     /* @__PURE__ */ React.createElement(Menu, { size: 20 })
-  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-medium tracking-tight text-amber-600 dark:text-amber-400" }, nombreUsuario, " ", /* @__PURE__ */ React.createElement("span", { className: "italic font-normal text-neutral-500" }, "\u2014 ", anioActual)), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "jarvis-numeros flex items-center gap-4 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Urgentes"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-red-600" }, urgentesCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Semanal"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-amber-600" }, semanalCount)), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-neutral-500 uppercase tracking-wide" }, "Hechos"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-medium text-green-600" }, completados)), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(UsuarioControl, null), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "font-serif text-2xl font-extrabold tracking-tight text-neutral-900 dark:text-neutral-50" }, nombreUsuario, " ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-neutral-400 dark:text-neutral-500" }, "\xB7 ", anioActual)), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 dark:text-neutral-400 mt-0.5" }, now.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }), " \xB7 ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-600 dark:text-amber-400" }, "Semana ", weekDates[0].getDate(), "\u2013", weekDates[6].getDate(), " ", weekDates[6].toLocaleDateString("es-AR", { month: "short" })))), /* @__PURE__ */ React.createElement("div", { className: "jarvis-numeros flex items-center gap-2 text-sm flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl bg-laca-600 text-white", title: "Urgentes" }, /* @__PURE__ */ React.createElement("span", { className: "font-serif text-lg font-extrabold leading-none" }, urgentesCount), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold uppercase tracking-wide" }, "urgentes")), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 text-neutral-950", title: "Semanal" }, /* @__PURE__ */ React.createElement("span", { className: "font-serif text-lg font-extrabold leading-none" }, semanalCount), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold uppercase tracking-wide" }, "semanal")), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl bg-jade-600 dark:bg-jade-500 text-white", title: "Hechos" }, /* @__PURE__ */ React.createElement("span", { className: "font-serif text-lg font-extrabold leading-none" }, completados), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold uppercase tracking-wide" }, "hechos")), /* @__PURE__ */ React.createElement(BotonTema, null), /* @__PURE__ */ React.createElement(NubeControl, null), /* @__PURE__ */ React.createElement(UsuarioControl, null), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setHeaderAbierto(false),
@@ -10849,7 +10878,7 @@ function App() {
       agregarObjetivoSemanal,
       migracionInfo: lpMigracionInfo
     }
-  ), tab === "notas" && /* @__PURE__ */ React.createElement(Notas, null), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl font-medium" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Copias de seguridad, sincronizaci\xF3n con Sheets y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Copia de seguridad en archivo"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Conect\xE1 una carpeta para respaldo autom\xE1tico, o hac\xE9 una copia manual para descargar / importar."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(BackupControl, null))), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Sincronizaci\xF3n con Google Sheets"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Trae la rutina y los objetivos desde los archivos generados por los skills (requiere sync_server.py en la PC).", lastSync ? " \xDAltima sync: " + lastSync + "." : ""), /* @__PURE__ */ React.createElement(
+  ), tab === "notas" && /* @__PURE__ */ React.createElement(Notas, null), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Copias de seguridad, sincronizaci\xF3n con Sheets y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Copia de seguridad en archivo"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Conect\xE1 una carpeta para respaldo autom\xE1tico, o hac\xE9 una copia manual para descargar / importar."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(BackupControl, null))), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Sincronizaci\xF3n con Google Sheets"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Trae la rutina y los objetivos desde los archivos generados por los skills (requiere sync_server.py en la PC).", lastSync ? " \xDAltima sync: " + lastSync + "." : ""), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: handleSync,
@@ -10858,7 +10887,7 @@ function App() {
     },
     /* @__PURE__ */ React.createElement("span", { className: isSyncing ? "animate-spin inline-block" : "" }, isSyncing ? "\u{1F504}" : syncSource === "json" ? "\u2705" : "\u26A0\uFE0F"),
     /* @__PURE__ */ React.createElement("span", null, isSyncing ? "Sincronizando\u2026" : syncSource === "json" ? "Volver a sincronizar" : "Sincronizar (datos hardcodeados ahora)")
-  )), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 12, padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Tu cuenta en la nube"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Si en alg\xFAn aparato aparecen tareas viejas que ya hab\xEDas borrado, es porque la nube acumul\xF3 datos de versiones anteriores. Eleg\xED desde el aparato que tiene la ", /* @__PURE__ */ React.createElement("b", null, "versi\xF3n buena"), ":"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Tu cuenta en la nube"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Si en alg\xFAn aparato aparecen tareas viejas que ya hab\xEDas borrado, es porque la nube acumul\xF3 datos de versiones anteriores. Eleg\xED desde el aparato que tiene la ", /* @__PURE__ */ React.createElement("b", null, "versi\xF3n buena"), ":"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
@@ -10883,7 +10912,48 @@ function App() {
     },
     /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 500 } }, "La nube manda"),
     /* @__PURE__ */ React.createElement("span", { className: "block text-[11.5px] text-neutral-500 mt-0.5" }, "Descarta lo local de este aparato y trae la versi\xF3n guardada en tu cuenta.")
-  ))))))), tourPaso !== null && /* @__PURE__ */ React.createElement(TourGuiado, { paso: tourPaso, setPaso: setTourPaso, onCerrar: cerrarTour }));
+  ))))))), esMobile && /* @__PURE__ */ React.createElement(
+    "nav",
+    {
+      className: "jarvis-navinf fixed left-3 right-3 z-50 rounded-[22px] bg-neutral-900 dark:bg-black border border-neutral-800 flex justify-around p-1.5 shadow-xl",
+      style: { bottom: "calc(10px + env(safe-area-inset-bottom))" },
+      "aria-label": "Navegaci\xF3n principal"
+    },
+    [
+      { key: "dia", label: "Mi d\xEDa", icon: Sun },
+      { key: "semana", label: "Semana", icon: Calendar },
+      { key: "objetivos", label: "Objetivos", icon: Target },
+      { key: "notas", label: "Notas", icon: NotebookPen }
+    ].map((t) => {
+      const Icon = t.icon;
+      const act = tab === t.key;
+      return /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: t.key,
+          onClick: () => {
+            setTab(t.key);
+            window.scrollTo(0, 0);
+          },
+          "aria-label": t.label,
+          "aria-current": act ? "page" : void 0,
+          className: `flex flex-col items-center justify-center gap-0.5 min-w-[60px] h-12 rounded-2xl text-[11px] font-bold ${act ? "bg-amber-500 text-neutral-950" : "text-[#B9B0A0]"}`
+        },
+        /* @__PURE__ */ React.createElement(Icon, { size: 20, strokeWidth: 1.75 }),
+        t.label
+      );
+    }),
+    /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setSidebarAbierto(true),
+        "aria-label": "M\xE1s pesta\xF1as",
+        className: "flex flex-col items-center justify-center gap-0.5 min-w-[60px] h-12 rounded-2xl text-[11px] font-bold text-[#B9B0A0]"
+      },
+      /* @__PURE__ */ React.createElement(Menu, { size: 20, strokeWidth: 1.75 }),
+      "M\xE1s"
+    )
+  ), tourPaso !== null && /* @__PURE__ */ React.createElement(TourGuiado, { paso: tourPaso, setPaso: setTourPaso, onCerrar: cerrarTour }));
 }
 (function() {
   function render() {
