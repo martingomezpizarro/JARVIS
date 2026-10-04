@@ -1547,8 +1547,10 @@
       // haya service worker —no sólo cuando ya está controlando la página,
       // porque recién instalada o recién actualizada `controller` viene en
       // null— y sólo si no hay registro se usa la de página (la compu en 8765).
-      function mostrar(titulo, cuerpo) {
-        var opts = { body: cuerpo, icon: LOGO, badge: LOGO, tag: "jarvis-" + titulo };
+      function mostrar(titulo, cuerpo, tag) {
+        // El tag es el MISMO que usa el cerebro para el push ("jarvis-" + clave|fecha):
+        // si el aviso llega por los dos caminos, el sistema muestra uno solo.
+        var opts = { body: cuerpo, icon: LOGO, badge: LOGO, tag: tag || ("jarvis-" + titulo) };
         diag.ultimoIntento = Date.now();
         diag.ultimoTitulo = titulo;
         function porPagina() {
@@ -1605,7 +1607,7 @@
           var titulo = falta > 0 ? ("En " + falta + " min: " + m.titulo)
                      : falta === 0 ? ("Ahora: " + m.titulo)
                      : ("Ya empezó (" + m.hora + "): " + m.titulo);
-          mostrar(titulo, m.hora + (m.area ? " · " + m.area : ""));
+          mostrar(titulo, m.hora + (m.area ? " · " + m.area : ""), "jarvis-" + id);
           diag.disparos++;
           av[id] = Date.now();
           cambio = true;
@@ -1721,6 +1723,167 @@
             ventanaTarde: VENTANA_TARDE,
           };
         }
+      };
+    })();
+  </script>
+
+  <!-- ==================================================================
+       Avisos con la app cerrada (Web Push) — Fase 1 del cerebro
+       ------------------------------------------------------------------
+       La app NO manda los avisos: sólo deja anotado este aparato en
+       jarvis/{uid}/aparatos/{id} (endpoint + llaves de cifrado). El cerebro
+       (Cloudflare Worker) lee las marcas de la campanita y empuja el aviso
+       al aparato aunque la app esté cerrada.
+       ================================================================== -->
+  <script>
+    (function () {
+      var VAPID_PUBLIC = "BApPYV5xDGhUD3LpESHtXbXirllcJAwbsOmv5v8YoxiQvqBgcC-hfZ7a6dKv9Sgv6gjIOxJd1ihEyGb7O-TUoJE";
+      var CEREBRO_DEF = "";               // se completa cuando el cerebro esté publicado
+      var KEY_URL = "martin:cerebro_url"; // viaja con la nube: se carga una vez y vale en todos los aparatos
+
+      function deB64(s) {
+        s = String(s).replace(/-/g, "+").replace(/_/g, "/");
+        while (s.length % 4) s += "=";
+        var bin = atob(s), out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+      function aB64(buf) {
+        var b = new Uint8Array(buf), s = "";
+        for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+        return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      }
+      function cerebro() {
+        var u = "";
+        try { u = localStorage.getItem(KEY_URL) || ""; } catch (_) {}
+        return (u || CEREBRO_DEF).replace(/\/+$/, "");
+      }
+      function setCerebro(u) {
+        u = String(u || "").trim().replace(/\/+$/, "");
+        if (u && !/^https:\/\//.test(u)) u = "https://" + u;
+        if (window.storage && window.storage.set) window.storage.set(KEY_URL, u);
+        else try { localStorage.setItem(KEY_URL, u); } catch (_) {}
+        return u;
+      }
+      function soportado() {
+        return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+      }
+      // Recién abierta la app el service worker puede estar registrándose
+      // todavía: se le dan unos segundos. En la compu (8765) no hay ninguno y
+      // ahí sí se contesta "no hay" al vencer la espera.
+      function registro() {
+        if (!navigator.serviceWorker) return Promise.resolve(null);
+        return navigator.serviceWorker.getRegistration().then(function (r) {
+          if (r) return r;
+          return Promise.race([
+            navigator.serviceWorker.ready,
+            new Promise(function (ok) { setTimeout(function () { ok(null); }, 4000); })
+          ]);
+        }).then(function (r) { return r || null; });
+      }
+      function idAparato() {
+        var d = "aparato";
+        try { d = localStorage.getItem("jarvis:deviceId") || d; } catch (_) {}
+        return d.replace(/[^A-Za-z0-9_-]/g, "_");
+      }
+      function docAparato() {
+        var S = window.JarvisSync, ref = S && S.docRef && S.docRef();
+        return ref ? ref.collection("aparatos").doc(idAparato()) : null;
+      }
+      function guardar(sub) {
+        var d = docAparato();
+        if (!d) return Promise.reject(new Error("Primero tiene que estar conectada la nube ☁️ (sesión iniciada)."));
+        var j = sub.toJSON();
+        var zona = "";
+        try { zona = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
+        return d.set({
+          endpoint: j.endpoint,
+          keys: { p256dh: j.keys.p256dh, auth: j.keys.auth },
+          vapid: VAPID_PUBLIC.slice(0, 12),
+          zona: zona,
+          ua: String(navigator.userAgent || "").slice(0, 180),
+          actualizado: Date.now()
+        }, { merge: true });
+      }
+      function mismaLlave(sub) {
+        try { return aB64(sub.options.applicationServerKey) === VAPID_PUBLIC; } catch (_) { return true; }
+      }
+      function estado() {
+        if (!soportado()) return Promise.resolve({ soportado: false });
+        return registro().then(function (reg) {
+          if (!reg) return { soportado: true, sinSW: true };
+          return reg.pushManager.getSubscription().then(function (sub) {
+            return { soportado: true, activo: !!sub && mismaLlave(sub), permiso: Notification.permission };
+          });
+        }).catch(function (e) { return { soportado: true, error: (e && e.message) || String(e) }; });
+      }
+      function activar() {
+        var reg;
+        return Notification.requestPermission().then(function (p) {
+          if (p !== "granted") throw new Error(p === "denied"
+            ? "Las notificaciones están bloqueadas en este aparato (se destraban en los ajustes de la app)."
+            : "No se dio el permiso de notificaciones.");
+          return registro();
+        }).then(function (r) {
+          reg = r;
+          if (!reg) throw new Error("Esto se activa en la app instalada del celular (en la compu con el 8765 no hay service worker).");
+          return reg.pushManager.getSubscription();
+        }).then(function (s) {
+          // Si la suscripción vieja es de otra llave, no sirve: se rehace.
+          if (s && !mismaLlave(s)) return s.unsubscribe().then(function () { return null; });
+          return s;
+        }).then(function (s) {
+          return s || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: deB64(VAPID_PUBLIC) });
+        }).then(function (sub) {
+          return guardar(sub).then(function () { return sub; });
+        }, function (e) {
+          var m = (e && e.message) || String(e);
+          if (/permission denied|NotAllowed/i.test(m)) throw new Error("El teléfono no dejó registrar los avisos. Revise que Jarvis tenga las notificaciones permitidas en los ajustes de la app.");
+          if (/push service|AbortError/i.test(m)) throw new Error("El servicio de avisos del teléfono no respondió. Pruebe de nuevo con buena señal.");
+          throw e;
+        });
+      }
+      function desactivar() {
+        return registro().then(function (reg) {
+          return reg ? reg.pushManager.getSubscription() : null;
+        }).then(function (sub) {
+          var d = docAparato();
+          return Promise.all([
+            d ? d.delete().catch(function () {}) : null,
+            sub ? sub.unsubscribe() : null
+          ]);
+        });
+      }
+      function probar() {
+        var u = cerebro();
+        if (!u) return Promise.reject(new Error("Falta cargar la dirección del cerebro."));
+        var user = window.firebase && firebase.auth && firebase.auth().currentUser;
+        if (!user) return Promise.reject(new Error("No hay sesión iniciada."));
+        return user.getIdToken().then(function (t) {
+          return fetch(u + "/probar", { method: "POST", headers: { Authorization: "Bearer " + t } });
+        }).then(function (r) {
+          return r.json().catch(function () { return { error: "El cerebro respondió " + r.status }; });
+        }).then(function (j) {
+          if (!j.ok) throw new Error(j.problema || j.error || "No se pudo mandar la prueba.");
+          return j;
+        });
+      }
+      // Al abrir la app: si este aparato ya tenía avisos, se vuelve a anotar la
+      // suscripción (el navegador puede renovarla sin avisar). Espera a que la
+      // nube haya iniciado sesión; si no llega, no insiste.
+      function refrescar(intento) {
+        intento = intento || 0;
+        if (!soportado() || Notification.permission !== "granted") return;
+        if (!docAparato()) { if (intento < 12) setTimeout(function () { refrescar(intento + 1); }, 5000); return; }
+        registro().then(function (reg) { return reg && reg.pushManager.getSubscription(); })
+          .then(function (sub) { if (sub && mismaLlave(sub)) return guardar(sub); })
+          .catch(function (e) { console.warn("[Jarvis] no se pudo refrescar la suscripción:", e); });
+      }
+      setTimeout(refrescar, 6000);
+
+      window.JarvisPush = {
+        soportado: soportado, estado: estado, activar: activar, desactivar: desactivar,
+        probar: probar, cerebro: cerebro, setCerebro: setCerebro
       };
     })();
   </script>
@@ -2686,14 +2849,14 @@ async function saveState(key, value) {
     console.error("save error", e);
   }
 }
-function AreaIcon({ area, size = 14 }) {
+function AreaIcon({ area, size = 14, tinta = null }) {
   if (areaObsoleta(area)) return /* @__PURE__ */ React.createElement(Target, { size, style: { color: COLOR_OBSOLETO } });
   const a = AREAS.find((x) => x.key === area);
   if (a) {
     const Icon = a.icon;
-    return /* @__PURE__ */ React.createElement(Icon, { size, style: { color: a.color } });
+    return /* @__PURE__ */ React.createElement(Icon, { size, style: { color: tinta || a.color } });
   }
-  return /* @__PURE__ */ React.createElement(Target, { size, style: { color: getAreaColor(area) } });
+  return /* @__PURE__ */ React.createElement(Target, { size, style: { color: tinta || getAreaColor(area) } });
 }
 function Pill({ children, color, bg, active, onClick }) {
   return /* @__PURE__ */ React.createElement(
@@ -4116,6 +4279,25 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
   const [filtroPrioridad, setFiltroPrioridad] = useState(null);
   const [archivoAbierto, setArchivoAbierto] = useState(false);
   const [seleccion, setSeleccion] = useState([]);
+  const [vistaSem, setVistaSemState] = useState(() => {
+    try {
+      return localStorage.getItem("martin:sem_vista") || "explorador";
+    } catch (_) {
+      return "explorador";
+    }
+  });
+  const setVistaSem = (v) => {
+    setVistaSemState(v);
+    try {
+      localStorage.setItem("martin:sem_vista", v);
+    } catch (_) {
+    }
+  };
+  const [areaSem, setAreaSem] = useState(null);
+  const [abiertasSem, setAbiertasSem] = useState({});
+  const [selSem, setSelSem] = useState(null);
+  const [nuevoSem, setNuevoSem] = useState({});
+  const [diaSem, setDiaSem] = useState(null);
   const lpResumen = (lpObjetivos || []).filter((o) => !o.completado);
   const areaList = taxonomia && taxonomia.length ? taxonomia.map((t) => ({ key: t.area, color: t.color || getAreaColor(t.area) })) : AREAS;
   const seccionColorMap = useMemo(() => {
@@ -4284,6 +4466,18 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
     return areas;
   }, [taxonomia, filtrados, recurrentesFiltradas, filtroCategoria]);
   const cuentaArea = (a) => a.sinSeccion.length + a.secciones.reduce((n, sec) => n + sec.items.length + sec.subsecciones.reduce((m, sb) => m + sb.items.length, 0), 0);
+  const hechosArea = (a) => {
+    const h = (l) => l.filter((o) => o.completado).length;
+    return h(a.sinSeccion) + a.secciones.reduce((n, sec) => n + h(sec.items) + sec.subsecciones.reduce((m, sb) => m + h(sb.items), 0), 0);
+  };
+  const kpiSemana = {
+    urgentes: activos.filter((o) => !o.completado && o.prioridad === "urgente").length,
+    noOlvides: activos.filter((o) => !o.completado && o.prioridad === "no-olvides").length,
+    sinDia: activos.filter((o) => !o.completado && !o.dia).length,
+    cumplidos: cumplidosVivos.length,
+    total: activos.length
+  };
+  const pctSemana = kpiSemana.total ? Math.round(kpiSemana.cumplidos / kpiSemana.total * 100) : 0;
   const [nuevoEn, setNuevoEn] = useState(null);
   const claveRama = (c, se, su) => `${c}||${se}||${su}`;
   const abrirNuevo = (c, se, su) => {
@@ -4368,7 +4562,17 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
       }
     );
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Objetivos de la semana"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Estructura: ", /* @__PURE__ */ React.createElement("strong", null, "\xC1rea"), " \u203A Sub\xE1rea \u203A Tarea espec\xEDfica \u203A d\xEDa + hora + repetici\xF3n", /* @__PURE__ */ React.createElement("br", null), "Lo que marc\xE1s como hecho sale de ", /* @__PURE__ */ React.createElement("strong", null, "Semana"), " al instante, pero ac\xE1 queda tachado hasta que lo archives.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, cumplidosVivos.length > 0 && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Objetivos de la semana"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 mt-0.5" }, "Estructura: ", /* @__PURE__ */ React.createElement("strong", null, "\xC1rea"), " \u203A Sub\xE1rea \u203A Tarea espec\xEDfica \u203A d\xEDa + hora + repetici\xF3n", /* @__PURE__ */ React.createElement("br", null), "Lo que marc\xE1s como hecho sale de ", /* @__PURE__ */ React.createElement("strong", null, "Semana"), " al instante, pero ac\xE1 queda tachado hasta que lo archives.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex p-1 rounded-xl bg-white dark:bg-neutral-900", role: "group", "aria-label": "Vista" }, [["explorador", "Explorador"], ["lista", "Lista"]].map(([k, l]) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: k,
+      type: "button",
+      onClick: () => setVistaSem(k),
+      "aria-pressed": vistaSem === k,
+      className: `min-h-[36px] px-3.5 rounded-lg text-sm font-bold ${vistaSem === k ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "text-neutral-600 dark:text-neutral-300"}`
+    },
+    l
+  ))), cumplidosVivos.length > 0 && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => archivarObjetivos(cumplidosVivos.map((o) => o.id)),
@@ -4390,7 +4594,38 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
     },
     /* @__PURE__ */ React.createElement(Plus, { size: 14 }),
     mostrarForm ? "Cancelar" : "Nuevo objetivo"
-  ))), lpResumen.length > 0 && /* @__PURE__ */ React.createElement(
+  ))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-5 gap-3" }, /* @__PURE__ */ React.createElement("section", { className: "col-span-2 lg:col-span-1 rounded-2xl p-5 bg-jade-600 dark:bg-jade-500 text-white flex flex-col justify-between gap-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest" }, "Avance de la semana"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums" }, pctSemana, "%"), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-white/20 overflow-hidden mt-3" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-amber-500", style: { width: pctSemana + "%" } })), /* @__PURE__ */ React.createElement("div", { className: "text-sm mt-2 opacity-90 tabular-nums" }, kpiSemana.cumplidos, " de ", kpiSemana.total, " cumplidos"))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setFiltroPrioridad(filtroPrioridad === "urgente" ? null : "urgente"),
+      className: `text-left rounded-2xl p-5 bg-laca-600 text-white flex flex-col justify-between gap-3 ${filtroPrioridad === "urgente" ? "ring-4 ring-amber-500" : ""}`,
+      title: "Filtrar s\xF3lo los urgentes"
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest" }, "Urgentes"),
+    /* @__PURE__ */ React.createElement("span", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums" }, kpiSemana.urgentes)
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setFiltroPrioridad(filtroPrioridad === "no-olvides" ? null : "no-olvides"),
+      className: `text-left rounded-2xl p-5 bg-amber-500 text-neutral-950 flex flex-col justify-between gap-3 ${filtroPrioridad === "no-olvides" ? "ring-4 ring-neutral-900 dark:ring-white" : ""}`,
+      title: "Filtrar s\xF3lo los no te olvides"
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest" }, "No te olvides"),
+    /* @__PURE__ */ React.createElement("span", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums" }, kpiSemana.noOlvides)
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => vistaSem === "explorador" ? setDiaSem(diaSem === "sin" ? null : "sin") : setTab && setTab("organizar"),
+      className: `text-left rounded-2xl p-5 bg-white dark:bg-neutral-900 flex flex-col justify-between gap-3 ${vistaSem === "explorador" && diaSem === "sin" ? "ring-4 ring-amber-500" : ""}`,
+      title: vistaSem === "explorador" ? "Filtrar los que no tienen d\xEDa" : "Repartirlos en Organizar"
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400" }, "Sin d\xEDa"),
+    /* @__PURE__ */ React.createElement("span", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums" }, kpiSemana.sinDia),
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500 dark:text-neutral-400" }, vistaSem === "explorador" ? "toc\xE1 para filtrarlos" : "repartir en Organizar \u2192")
+  ), /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 bg-white dark:bg-neutral-900 flex flex-col justify-between gap-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400" }, "Cumplidos"), /* @__PURE__ */ React.createElement("span", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums text-jade-600 dark:text-jade-300" }, kpiSemana.cumplidos))), lpResumen.length > 0 && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setTab && setTab("largoplazo"),
@@ -4444,8 +4679,286 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
       onClick: () => setFiltroPrioridad(filtroPrioridad === k ? null : k)
     },
     p.label
-  )))), estructura.map((a) => {
+  )))), vistaSem === "explorador" && (() => {
+    const hoyIdx = (/* @__PURE__ */ new Date()).getDay();
+    const ini = getInicioDeSemana(/* @__PURE__ */ new Date());
+    const pasaDia = (o) => diaSem === null ? true : diaSem === "sin" ? !o.dia : o.dia === diaSem;
+    const aplanar = (a) => {
+      const grupos2 = [];
+      a.secciones.forEach((sec) => {
+        const items = sec.items.map((o) => ({ o, sub: "" })).concat(sec.subsecciones.reduce((acc, sb) => acc.concat(sb.items.map((o) => ({ o, sub: sb.nombre }))), []));
+        grupos2.push({ clave: a.area + "::" + sec.nombre, nombre: sec.nombre, seccion: sec.nombre, items });
+      });
+      if (a.sinSeccion.length) grupos2.push({ clave: a.area + "::\u2014", nombre: "Sin secci\xF3n", seccion: "", items: a.sinSeccion.map((o) => ({ o, sub: "" })) });
+      return grupos2;
+    };
+    const todosItems = estructura.reduce((acc, a) => acc.concat(aplanar(a).reduce((x, g) => x.concat(g.items.map((it) => it.o)), [])), []);
+    const pendientes = todosItems.filter((o) => !o.completado);
+    const A = estructura.find((a) => a.area === areaSem) || estructura.find((a) => cuentaArea(a) > 0) || estructura[0];
+    if (!A) return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-8 text-center text-neutral-500" }, 'No hay \xE1reas definidas. Cre\xE1 las tuyas en "I have a dream".');
+    const grupos = aplanar(A);
+    const itemsA = grupos.reduce((x, g) => x.concat(g.items.map((it) => it.o)), []);
+    const okA = itemsA.filter((o) => o.completado).length;
+    const sinDiaA = itemsA.filter((o) => !o.completado && !o.dia).length;
+    const oSel = selSem ? todosItems.find((o) => String(o.id) === String(selSem)) : null;
+    const lpTitulo = (o) => {
+      const x = o.lp_id ? (lpObjetivos || []).find((l) => l.id === o.lp_id) : null;
+      return x ? x.titulo : "";
+    };
+    const cuandoTxt = (o) => {
+      if (!o.dia) return "Asignar d\xEDa";
+      const i = DIAS.findIndex((d) => d.key === o.dia);
+      const f = new Date(ini);
+      f.setDate(ini.getDate() + i);
+      return `${DIAS[i] ? DIAS[i].es : ""} ${f.getDate()}${o.hora ? " \xB7 " + o.hora : ""}`;
+    };
+    const PRIO = { urgente: ["Urgente", "bg-laca-600 text-white"], semanal: ["Semanal", "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300"], "no-olvides": ["No olvides", "bg-amber-500 text-neutral-950"] };
+    const crearEn = (g) => {
+      const txt = (nuevoSem[g.clave] || "").trim();
+      if (!txt) return;
+      agregarObjetivo({
+        categoria: A.area,
+        seccion: g.seccion,
+        subseccion: "",
+        tarea: txt,
+        dia: diaSem && diaSem !== "sin" ? diaSem : null,
+        hora: null,
+        prioridad: filtroPrioridad || "semanal",
+        completado: false
+      });
+      setNuevoSem({ ...nuevoSem, [g.clave]: "" });
+    };
+    const marcar = (o) => o.esRecurrente ? onToggleRecurrente && onToggleRecurrente(o.id) : toggleObjetivoSem(o);
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mr-1.5" }, "D\xEDa"), DIAS.map((d, i) => {
+      const f = new Date(ini);
+      f.setDate(ini.getDate() + i);
+      const n = pendientes.filter((o) => o.dia === d.key).length;
+      const on = diaSem === d.key;
+      return /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: d.key,
+          type: "button",
+          onClick: () => setDiaSem(on ? null : d.key),
+          "aria-pressed": on,
+          className: `min-w-[58px] min-h-[52px] px-2.5 rounded-xl tabular-nums ${on ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300"} ${i === hoyIdx && !on ? "ring-2 ring-amber-500" : ""}`
+        },
+        /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] font-bold" }, d.es, " ", f.getDate()),
+        /* @__PURE__ */ React.createElement("span", { className: "block font-serif text-lg font-extrabold leading-tight" }, n)
+      );
+    }), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setDiaSem(diaSem === "sin" ? null : "sin"),
+        "aria-pressed": diaSem === "sin",
+        className: `min-w-[64px] min-h-[52px] px-2.5 rounded-xl tabular-nums ${diaSem === "sin" ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300"}`
+      },
+      /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] font-bold" }, "Sin d\xEDa"),
+      /* @__PURE__ */ React.createElement("span", { className: "block font-serif text-lg font-extrabold leading-tight" }, pendientes.filter((o) => !o.dia).length)
+    ), (diaSem !== null || filtroPrioridad) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      setDiaSem(null);
+      setFiltroPrioridad(null);
+    }, className: "ml-auto text-sm font-bold text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 min-h-[40px] px-2" }, "Quitar filtros \u2715")), editando && (() => {
+      const o = todosItems.find((x) => x.id === editando);
+      if (!o || o.esRecurrente) return null;
+      return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-2" }, /* @__PURE__ */ React.createElement(
+        ObjetivoItem,
+        {
+          objetivo: o,
+          editando: true,
+          onEdit: () => setEditando(null),
+          onActualizar: (c) => actualizarObjetivo(o.id, c),
+          onEliminar: () => {
+            eliminarObjetivo(o.id);
+            setSelSem(null);
+          },
+          onToggle: () => toggleObjetivoSem(o),
+          onArchivar: () => {
+            archivarObjetivo(o.id);
+            setSelSem(null);
+          },
+          onToggleSub: (subId) => toggleSubObjetivo(o.id, subId),
+          onAsignar: asignarObjetivo,
+          color: A.color,
+          areas: areaList,
+          taxonomia,
+          lpObjetivos,
+          seccionesPorCategoria,
+          subseccionesPorSeccion
+        }
+      ));
+    })(), /* @__PURE__ */ React.createElement("div", { className: `grid gap-4 items-start grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] ${oSel ? "xl:grid-cols-[260px_minmax(0,1fr)_370px]" : ""}` }, /* @__PURE__ */ React.createElement("nav", { "aria-label": "\xC1reas", className: "flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0 lg:sticky lg:top-24" }, estructura.map((a) => {
+      const its = aplanar(a).reduce((x, g) => x.concat(g.items.map((it) => it.o)), []);
+      const k = its.filter((o) => o.completado).length;
+      const u = its.filter((o) => !o.completado && o.prioridad === "urgente").length;
+      const on = a.area === A.area;
+      return /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: a.area,
+          type: "button",
+          onClick: () => {
+            setAreaSem(a.area);
+            setSelSem(null);
+          },
+          "aria-pressed": on,
+          className: `flex items-center gap-3 shrink-0 min-w-[220px] lg:min-w-0 w-full text-left rounded-2xl px-3.5 py-3 ${on ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"}`
+        },
+        /* @__PURE__ */ React.createElement("span", { className: "w-10 h-10 rounded-xl shrink-0 flex items-center justify-center", style: { background: a.color, color: tintaSobre(a.color) } }, /* @__PURE__ */ React.createElement(AreaIcon, { area: a.area, size: 18, tinta: tintaSobre(a.color) })),
+        /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[15px] font-bold truncate" }, a.area), /* @__PURE__ */ React.createElement("span", { className: `block text-xs mt-0.5 ${on ? "opacity-80" : "text-neutral-500 dark:text-neutral-400"}` }, its.length ? `${u ? u + (u > 1 ? " urgentes \xB7 " : " urgente \xB7 ") : ""}${its.length - k} pendientes` : "nada esta semana")),
+        /* @__PURE__ */ React.createElement("span", { className: `text-[13px] font-extrabold tabular-nums px-2 py-1 rounded-lg ${on ? "bg-amber-500/20 dark:bg-neutral-950/15" : "bg-neutral-100 dark:bg-neutral-800"}` }, k, "/", its.length)
+      );
+    })), /* @__PURE__ */ React.createElement("main", { className: "flex flex-col gap-3 min-w-0" }, /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 sm:p-6 flex items-center gap-5 flex-wrap", style: { background: A.color, color: tintaSobre(A.color) } }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[200px]" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-4xl font-extrabold leading-none tracking-tight" }, A.area), /* @__PURE__ */ React.createElement("div", { className: "text-sm font-semibold mt-2 opacity-85 tabular-nums" }, itemsA.length, " objetivos esta semana \xB7 ", sinDiaA, " sin d\xEDa")), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[220px] max-w-md" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between text-sm font-bold tabular-nums" }, /* @__PURE__ */ React.createElement("span", null, "Cumplido esta semana"), /* @__PURE__ */ React.createElement("span", null, okA, "/", itemsA.length)), /* @__PURE__ */ React.createElement("div", { className: "h-2.5 rounded-full mt-2 overflow-hidden", style: { background: "rgba(0,0,0,0.14)" } }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full", style: { width: (itemsA.length ? Math.round(okA / itemsA.length * 100) : 0) + "%", background: tintaSobre(A.color) } })))), grupos.map((g) => {
+      const ab = abiertasSem[g.clave] !== void 0 ? abiertasSem[g.clave] : true;
+      const vis = g.items.filter((it) => pasaDia(it.o));
+      const k = g.items.filter((it) => it.o.completado).length;
+      return /* @__PURE__ */ React.createElement("section", { key: g.clave, className: "rounded-2xl bg-white dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => setAbiertasSem({ ...abiertasSem, [g.clave]: !ab }),
+          "aria-expanded": ab,
+          className: "w-full flex items-center gap-3.5 px-5 py-3.5 min-h-[60px] text-left"
+        },
+        /* @__PURE__ */ React.createElement(ChevronRight, { size: 18, strokeWidth: 2.25, className: "text-neutral-400 shrink-0 transition-transform duration-200", style: { transform: ab ? "rotate(90deg)" : "none" } }),
+        /* @__PURE__ */ React.createElement("span", { className: "flex-1 font-serif text-xl font-bold truncate" }, g.nombre),
+        /* @__PURE__ */ React.createElement("span", { className: "text-[13px] font-bold tabular-nums text-neutral-500 dark:text-neutral-400" }, k, "/", g.items.length, " cumplidos")
+      ), ab && /* @__PURE__ */ React.createElement("div", { className: "px-5 pb-4 flex flex-col gap-1.5" }, vis.map(({ o, sub }) => {
+        const on = selSem !== null && String(selSem) === String(o.id);
+        const P = PRIO[o.prioridad] || PRIO.semanal;
+        const lp = lpTitulo(o);
+        const meta = [o.tarea && o.subseccion ? o.subseccion : sub, o.esRecurrente ? o.recurrencia === "mensual" ? "recurrente mensual" : "recurrente semanal" : "", lp ? "\u2191 " + lp : ""].filter(Boolean).join(" \xB7 ");
+        return /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            key: o.id,
+            className: `flex items-center gap-3 px-3 py-2.5 rounded-xl ${on ? "bg-amber-50 dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-800/60"}`,
+            style: on ? { boxShadow: `inset 4px 0 0 ${A.color}` } : void 0
+          },
+          /* @__PURE__ */ React.createElement(
+            "button",
+            {
+              type: "button",
+              onClick: () => marcar(o),
+              "aria-label": o.completado ? "Desmarcar cumplido" : "Marcar cumplido",
+              "aria-pressed": !!o.completado,
+              className: `w-[26px] h-[26px] rounded-full shrink-0 flex items-center justify-center border-2 ${o.completado ? "bg-jade-600 border-jade-600 text-white" : "border-neutral-300 dark:border-neutral-600 text-transparent"}`
+            },
+            /* @__PURE__ */ React.createElement(Check, { size: 14, strokeWidth: 3 })
+          ),
+          /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setSelSem(on ? null : o.id), className: "flex-1 min-w-0 flex items-center gap-2.5 text-left" }, /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-[15px] font-semibold ${o.completado ? "line-through text-neutral-400" : ""}` }, itemTitulo(o)), meta && /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 truncate" }, meta)), /* @__PURE__ */ React.createElement("span", { className: `hidden sm:inline-block text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 ${P[1]}` }, P[0]), /* @__PURE__ */ React.createElement("span", { className: `min-w-[84px] text-center text-xs font-bold px-2.5 py-1.5 rounded-lg tabular-nums shrink-0 ${o.dia ? "bg-neutral-100 dark:bg-neutral-800" : "border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-600 text-neutral-500"}` }, cuandoTxt(o)))
+        );
+      }), vis.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm text-neutral-600 dark:text-neutral-300" }, g.items.length ? "Nada con ese filtro en esta secci\xF3n." : "Nada para esta semana ac\xE1."), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          value: nuevoSem[g.clave] || "",
+          onChange: (e) => setNuevoSem({ ...nuevoSem, [g.clave]: e.target.value }),
+          onKeyDown: (e) => {
+            if (e.key === "Enter") crearEn(g);
+          },
+          placeholder: `+ Objetivo en ${g.nombre}${diaSem && diaSem !== "sin" ? " para el " + (DIAS.find((d) => d.key === diaSem) || {}).full : ""} (Enter)`,
+          "aria-label": `Nuevo objetivo en ${g.nombre}`,
+          className: "mt-1 min-h-[44px] px-3.5 rounded-xl border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-700 bg-transparent text-sm outline-none focus:border-amber-500"
+        }
+      )));
+    }), grupos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-6 text-sm text-neutral-500" }, 'Esta \xE1rea todav\xEDa no tiene secciones en "I have a dream".')), oSel && (() => {
+      const o = oSel;
+      const lp = lpTitulo(o);
+      const ruta = [o.categoria, o.seccion, o.tarea ? o.subseccion : ""].filter(Boolean).join(" \u203A ");
+      return /* @__PURE__ */ React.createElement("aside", { "aria-label": "Detalle del objetivo", className: "xl:sticky xl:top-24 rounded-2xl bg-white dark:bg-neutral-900 p-5 flex flex-col gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold px-2.5 py-1 rounded-full truncate", style: { background: A.color, color: tintaSobre(A.color) } }, ruta), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => setSelSem(null),
+          "aria-label": "Cerrar detalle",
+          className: "ml-auto w-10 h-10 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 flex items-center justify-center shrink-0"
+        },
+        /* @__PURE__ */ React.createElement(X, { size: 16 })
+      )), o.esRecurrente ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-2xl font-bold" }, itemTitulo(o)), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-600 dark:text-neutral-300" }, "Recurrente ", o.recurrencia === "mensual" ? "mensual" : "semanal", ". Se edita en Organizar; ac\xE1 s\xF3lo se marca cumplida."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => marcar(o), className: "flex-1 min-h-[46px] rounded-xl bg-jade-600 dark:bg-jade-500 text-white text-sm font-bold" }, o.completado ? "Desmarcar" : "Marcar cumplida"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTab && setTab("organizar"), className: "min-h-[46px] px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-bold" }, "Ir a Organizar"))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          key: o.id + "-t",
+          defaultValue: itemTitulo(o),
+          "aria-label": "Nombre del objetivo",
+          onBlur: (e) => {
+            const v = e.target.value.trim();
+            if (v && v !== itemTitulo(o)) actualizarObjetivo(o.id, o.tarea || !o.subseccion ? { tarea: v } : { subseccion: v });
+          },
+          onKeyDown: (e) => {
+            if (e.key === "Enter") e.target.blur();
+          },
+          className: "font-serif text-2xl font-bold bg-transparent border-b-2 border-neutral-200 dark:border-neutral-700 focus:border-amber-500 outline-none pb-1.5"
+        }
+      ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mb-2" }, "Prioridad"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, ["urgente", "semanal", "no-olvides"].map((p) => {
+        const on = (o.prioridad || "semanal") === p;
+        return /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            key: p,
+            type: "button",
+            onClick: () => actualizarObjetivo(o.id, { prioridad: p }),
+            "aria-pressed": on,
+            className: `flex-1 min-h-[42px] rounded-xl text-[13px] font-bold ${on ? PRIO[p][1].replace("bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300", "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950") : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"}`
+          },
+          PRIO[p][0]
+        );
+      }))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mb-2" }, "D\xEDa"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-8 gap-1" }, DIAS.map((d) => {
+        const on = o.dia === d.key;
+        return /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            key: d.key,
+            type: "button",
+            onClick: () => asignarObjetivo(o.id, on ? null : d.key, on ? null : o.hora),
+            "aria-pressed": on,
+            title: d.full,
+            className: `min-h-[42px] rounded-lg text-xs font-bold ${on ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"}`
+          },
+          d.es.charAt(0)
+        );
+      }), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => asignarObjetivo(o.id, null),
+          "aria-pressed": !o.dia,
+          title: "Sin d\xEDa",
+          className: `min-h-[42px] rounded-lg text-xs font-bold ${!o.dia ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"}`
+        },
+        "\u2014"
+      ))), /* @__PURE__ */ React.createElement("div", { className: "flex items-end gap-2.5" }, /* @__PURE__ */ React.createElement("label", { className: "flex-1 flex flex-col gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400" }, "Hora"), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "time",
+          step: "900",
+          value: o.hora || "",
+          disabled: !o.dia,
+          onChange: (e) => o.dia && asignarObjetivo(o.id, o.dia, e.target.value || null),
+          className: "min-h-[44px] px-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-[15px] font-bold outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+        }
+      )), /* @__PURE__ */ React.createElement("span", { className: "pb-2.5" }, /* @__PURE__ */ React.createElement(Campanita, { clave: `obj::${o.id}`, datos: { titulo: itemTitulo(o), hora: o.hora, dia: o.dia, area: o.categoria, duracion: o.duracion }, size: 18 }))), !o.dia && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500 -mt-2" }, "Eleg\xED un d\xEDa para poder ponerle hora y aviso."), (o.subtareas || []).length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mb-1" }, "Subtareas"), o.subtareas.map((st) => /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: st.id,
+          type: "button",
+          onClick: () => toggleSubObjetivo(o.id, st.id),
+          "aria-pressed": !!st.hecha,
+          className: "w-full flex items-center gap-3 py-2 min-h-[42px] text-left border-t border-neutral-100 dark:border-neutral-800"
+        },
+        /* @__PURE__ */ React.createElement("span", { className: `w-5 h-5 rounded-md shrink-0 flex items-center justify-center border-2 ${st.hecha ? "bg-jade-600 border-jade-600 text-white" : "border-neutral-300 dark:border-neutral-600 text-transparent"}` }, /* @__PURE__ */ React.createElement(Check, { size: 11, strokeWidth: 3.5 })),
+        /* @__PURE__ */ React.createElement("span", { className: `text-sm ${st.hecha ? "line-through text-neutral-400" : ""}` }, st.titulo)
+      ))), lp && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTab && setTab("largoplazo"), className: "text-left px-3.5 py-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "Rumbo:"), " ", lp, " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, "\u2192")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => toggleObjetivoSem(o), className: "flex-1 min-h-[46px] px-4 rounded-xl bg-jade-600 dark:bg-jade-500 text-white text-sm font-bold" }, o.completado ? "Desmarcar cumplido" : "Marcar cumplido"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+        setEditando(o.id);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }, className: "min-h-[46px] px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-bold flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Pencil, { size: 14 }), " Todo"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+        archivarObjetivo(o.id);
+        setSelSem(null);
+      }, className: "min-h-[46px] px-4 rounded-xl border-[1.5px] border-neutral-200 dark:border-neutral-700 text-sm font-bold flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Archive, { size: 14 }), " Archivar"))));
+    })()));
+  })(), vistaSem === "lista" && /* @__PURE__ */ React.createElement(React.Fragment, null, estructura.map((a) => {
     const nItems = cuentaArea(a);
+    const nHechos = hechosArea(a);
     const vacia = nItems === 0;
     return /* @__PURE__ */ React.createElement(
       "div",
@@ -4453,25 +4966,14 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
         key: a.area,
         className: `rounded-2xl border bg-white dark:bg-neutral-900 overflow-hidden ${vacia ? "border-dashed border-neutral-200/70 dark:border-neutral-800/80" : "border-neutral-200/70 dark:border-neutral-800/80"}`
       },
-      /* @__PURE__ */ React.createElement(
-        "div",
-        {
-          className: "px-4 py-2.5 flex items-center gap-2 border-b border-neutral-100 dark:border-neutral-900",
-          style: { background: `${a.color}08` }
-        },
-        /* @__PURE__ */ React.createElement(AreaIcon, { area: a.area, size: 16 }),
-        /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-xl font-bold", style: { color: a.color } }, a.area),
-        !a.viva && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] px-1.5 py-0.5 rounded-full", style: { background: `${COLOR_OBSOLETO}20`, color: COLOR_OBSOLETO } }, "fuera de I have a dream"),
-        /* @__PURE__ */ React.createElement("span", { className: `text-xs ml-auto ${vacia ? "text-neutral-300 dark:text-neutral-700 italic" : "text-neutral-400"}` }, vacia ? "sin objetivos esta semana" : `${nItems} objetivo${nItems === 1 ? "" : "s"}`),
-        botonMas(a.area, "", "", a.color, `Nuevo objetivo en ${a.area}`)
-      ),
+      /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 flex items-center gap-2.5 flex-wrap border-b border-neutral-100 dark:border-neutral-800/70" }, /* @__PURE__ */ React.createElement("span", { className: "w-9 h-9 rounded-xl flex items-center justify-center shrink-0", style: { background: a.color, color: tintaSobre(a.color) } }, /* @__PURE__ */ React.createElement(AreaIcon, { area: a.area, size: 17, tinta: tintaSobre(a.color) })), /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-xl font-bold text-neutral-900 dark:text-neutral-50" }, a.area), !vacia && /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 ml-2", title: `${nHechos} de ${nItems} cumplidos` }, /* @__PURE__ */ React.createElement("span", { className: "w-24 h-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "block h-full rounded-full", style: { width: Math.round(nHechos / nItems * 100) + "%", background: a.color } })), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tabular-nums text-neutral-600 dark:text-neutral-300" }, nHechos, "/", nItems)), !a.viva && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] px-1.5 py-0.5 rounded-full", style: { background: `${COLOR_OBSOLETO}20`, color: COLOR_OBSOLETO } }, "fuera de I have a dream"), /* @__PURE__ */ React.createElement("span", { className: `text-xs ml-auto ${vacia ? "text-neutral-300 dark:text-neutral-700 italic" : "text-neutral-400"}` }, vacia ? "sin objetivos esta semana" : `${nItems} objetivo${nItems === 1 ? "" : "s"}`), botonMas(a.area, "", "", a.color, `Nuevo objetivo en ${a.area}`)),
       formularioSi(a.area, "", ""),
       /* @__PURE__ */ React.createElement("div", { className: "divide-y divide-neutral-100 dark:divide-neutral-900" }, a.sinSeccion.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "p-3.5" }, /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, a.sinSeccion.map((o) => fila(o, a.color, a)))), a.secciones.map((sec) => {
         const nSec = sec.items.length + sec.subsecciones.reduce((n, sb) => n + sb.items.length, 0);
         return /* @__PURE__ */ React.createElement("div", { key: sec.nombre, className: `p-3.5 ${nSec === 0 ? "opacity-60" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide mb-2 font-medium flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "w-2 h-2 rounded-full shrink-0", style: { background: sec.color } }), /* @__PURE__ */ React.createElement("span", { style: { color: sec.color } }, sec.nombre), nSec === 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-300 dark:text-neutral-700 normal-case tracking-normal" }, "\u2014 vac\xEDa"), botonMas(a.area, sec.nombre, "", sec.color, `Nuevo objetivo en ${a.area} \u203A ${sec.nombre}`)), formularioSi(a.area, sec.nombre, ""), sec.items.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, sec.items.map((o) => fila(o, sec.color, a))), sec.subsecciones.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.nombre, className: "mt-2 pl-3 border-l-2", style: { borderColor: `${sec.color}33` } }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] mb-1 flex items-center gap-1.5", style: { color: sec.color, opacity: 0.85 } }, /* @__PURE__ */ React.createElement("span", null, sub.nombre), sub.items.length === 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-300 dark:text-neutral-700" }, "\u2014 vac\xEDa"), botonMas(a.area, sec.nombre, sub.nombre, sec.color, `Nuevo objetivo en ${a.area} \u203A ${sec.nombre} \u203A ${sub.nombre}`)), formularioSi(a.area, sec.nombre, sub.nombre), sub.items.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, sub.items.map((o) => fila(o, sec.color, a))))));
       }), a.secciones.length === 0 && a.sinSeccion.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "p-3.5 text-xs text-neutral-400 italic" }, 'Esta \xE1rea todav\xEDa no tiene secciones en "I have a dream". Pod\xE9s crear igual un objetivo suelto con el +.'))
     );
-  }), estructura.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-center py-10 text-neutral-400 text-sm" }, 'No hay \xE1reas definidas. Cre\xE1 las tuyas en "I have a dream".'), (archivados.length > 0 || huerfanos.length > 0) && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement(
+  }), estructura.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-center py-10 text-neutral-400 text-sm" }, 'No hay \xE1reas definidas. Cre\xE1 las tuyas en "I have a dream".')), (archivados.length > 0 || huerfanos.length > 0) && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-neutral-200/70 dark:border-neutral-800/80 bg-white dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -5028,6 +5530,75 @@ function armarICSDeMarcas(marcas, anticipacion) {
   L.push("END:VCALENDAR");
   return { texto: L.join("\r\n"), cuantos };
 }
+function PanelAvisosAppCerrada() {
+  const P = window.JarvisPush;
+  const [st, setSt] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [url, setUrl] = useState(P ? P.cerebro() : "");
+  const [editarUrl, setEditarUrl] = useState(false);
+  const refrescar = () => {
+    if (P) P.estado().then(setSt);
+  };
+  useEffect(() => {
+    refrescar();
+  }, []);
+  if (!P) return null;
+  const hacer = (fn, okTexto) => {
+    setOcupado(true);
+    setMsg(null);
+    fn().then((r) => setMsg({ ok: true, texto: typeof okTexto === "function" ? okTexto(r) : okTexto })).catch((e) => setMsg({ ok: false, texto: e && e.message || String(e) })).finally(() => {
+      setOcupado(false);
+      refrescar();
+    });
+  };
+  const hayUrl = !!P.cerebro();
+  const btn = "px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50";
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Avisos con la app cerrada")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Jarvis revisa sus actividades marcadas con \u{1F514} cada dos minutos y le manda el aviso", /* @__PURE__ */ React.createElement("b", null, " aunque la app est\xE9 cerrada"), ". Se activa ", /* @__PURE__ */ React.createElement("b", null, "una vez en cada celular"), "."), !st ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-400" }, "Revisando este aparato\u2026") : !st.soportado ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 leading-snug" }, "Este navegador no permite avisos con la app cerrada. En ", /* @__PURE__ */ React.createElement("b", null, "iPhone"), ": agreg\xE1 Jarvis a la pantalla de inicio (Compartir \u203A Agregar a inicio) y abrilo desde ese \xEDcono.") : st.sinSW ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500 leading-snug" }, "En la compu no hace falta: esto se activa en la ", /* @__PURE__ */ React.createElement("b", null, "app instalada del celular"), ". Lo que marque ac\xE1 con \u{1F514} le va a llegar all\xE1.") : st.activo ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs font-medium text-emerald-700 dark:text-emerald-400" }, "\u2713 Activo en este aparato"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      disabled: ocupado || !hayUrl,
+      onClick: () => hacer(P.probar, (r) => `Enviado a ${r.enviados} aparato${r.enviados === 1 ? "" : "s"}. Cierre la app: tiene que llegar en segundos.`),
+      className: btn + " bg-amber-600 text-white hover:bg-amber-700"
+    },
+    "Mandar un aviso de prueba"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      disabled: ocupado,
+      onClick: () => hacer(P.desactivar, "Listo: este aparato ya no recibe avisos con la app cerrada."),
+      className: btn + " border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40"
+    },
+    "Desactivar"
+  ))) : /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      disabled: ocupado,
+      onClick: () => hacer(P.activar, "Activado. Desde ahora los avisos \u{1F514} le llegan con la app cerrada."),
+      className: btn + " bg-amber-600 text-white hover:bg-amber-700"
+    },
+    ocupado ? "Activando\u2026" : "Activar en este aparato"
+  ), msg && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2 leading-snug " + (msg.ok ? "text-emerald-700 dark:text-emerald-400" : "text-red-500") }, msg.texto), /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-2 border-t border-amber-200/70 dark:border-amber-900/40" }, hayUrl && !editarUrl ? /* @__PURE__ */ React.createElement("button", { onClick: () => setEditarUrl(true), className: "text-[10px] text-neutral-400 hover:text-amber-600" }, "Cerebro: ", P.cerebro().replace(/^https:\/\//, ""), " \xB7 cambiar") : /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-neutral-500" }, "Direcci\xF3n del cerebro"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: url,
+      onChange: (e) => setUrl(e.target.value),
+      placeholder: "https://jarvis-cerebro.xxxx.workers.dev",
+      className: "flex-1 min-w-[12rem] px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        setUrl(P.setCerebro(url));
+        setEditarUrl(false);
+        setMsg(null);
+      },
+      className: btn + " border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400"
+    },
+    "Guardar"
+  ))));
+}
 function PanelDiagnosticoAvisos() {
   const [abierto, setAbierto] = useState(false);
   const [, setTick] = useState(0);
@@ -5176,7 +5747,7 @@ function Recordatorios({ objetivos, feedback, setFeedback }) {
     return da !== db ? da - db : String(ma.hora || "").localeCompare(String(mb.hora || ""));
   });
   const DIA_ES = { Sunday: "Dom", Monday: "Lun", Tuesday: "Mar", Wednesday: "Mi\xE9", Thursday: "Jue", Friday: "Vie", Saturday: "S\xE1b" };
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Recordatorios"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-500 dark:text-neutral-400 mt-1" }, "La campanita y el registro de lo que Jarvis te avis\xF3.")), window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Usted elige actividad por actividad: el casillero ", /* @__PURE__ */ React.createElement("b", null, "\u201CAvisarme antes de que empiece\u201D"), "dentro del formulario que crea la actividad, o la campanita \u{1F514} al lado de cualquier actividad ya creada. Lo de la rutina avisa ", /* @__PURE__ */ React.createElement("b", null, "todas las semanas"), " ese d\xEDa a esa hora; un", /* @__PURE__ */ React.createElement("b", null, "evento"), " avisa ", /* @__PURE__ */ React.createElement("b", null, "una sola vez"), ", el d\xEDa de su fecha."), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, /* @__PURE__ */ React.createElement("b", null, "Lo que hay que saber:"), " esto es una notificaci\xF3n del navegador, as\xED que", /* @__PURE__ */ React.createElement("b", null, " s\xF3lo suena con el dashboard o la app abiertos"), " (aunque est\xE9n en segundo plano, mientras el aparato no los haya dormido). Si a la hora del aviso la app estaba cerrada, al volver a abrirla el aviso llega igual si no pas\xF3 m\xE1s de media hora, diciendo que llega tarde.", /* @__PURE__ */ React.createElement("b", null, " Para que suene con todo cerrado hay un solo camino: el bot\xF3n del Calendario, ac\xE1 abajo"), " \u2014 esas alarmas las tira el celular, no la p\xE1gina. Las marcas se sincronizan entre sus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Recordatorios"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-500 dark:text-neutral-400 mt-1" }, "La campanita y el registro de lo que Jarvis te avis\xF3.")), /* @__PURE__ */ React.createElement(PanelAvisosAppCerrada, null), window.JarvisNotif && window.JarvisNotif.soportado() && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement(Bell, { size: 16, className: "text-amber-600" }), /* @__PURE__ */ React.createElement("h3", { className: "font-medium text-sm" }, "Notificaciones del navegador")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, "Usted elige actividad por actividad: el casillero ", /* @__PURE__ */ React.createElement("b", null, "\u201CAvisarme antes de que empiece\u201D"), "dentro del formulario que crea la actividad, o la campanita \u{1F514} al lado de cualquier actividad ya creada. Lo de la rutina avisa ", /* @__PURE__ */ React.createElement("b", null, "todas las semanas"), " ese d\xEDa a esa hora; un", /* @__PURE__ */ React.createElement("b", null, "evento"), " avisa ", /* @__PURE__ */ React.createElement("b", null, "una sola vez"), ", el d\xEDa de su fecha."), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mb-3 leading-snug" }, /* @__PURE__ */ React.createElement("b", null, "Lo que hay que saber:"), " esto es una notificaci\xF3n del navegador, as\xED que", /* @__PURE__ */ React.createElement("b", null, " s\xF3lo suena con el dashboard o la app abiertos"), " (aunque est\xE9n en segundo plano, mientras el aparato no los haya dormido). Si a la hora del aviso la app estaba cerrada, al volver a abrirla el aviso llega igual si no pas\xF3 m\xE1s de media hora, diciendo que llega tarde.", /* @__PURE__ */ React.createElement("b", null, " Para que suene con todo cerrado: active \u201CAvisos con la app cerrada\u201D (arriba) en el celular"), ", o use el bot\xF3n del Calendario de ac\xE1 abajo \u2014 esas alarmas las tira el celular, no la p\xE1gina. Las marcas se sincronizan entre sus aparatos."), notifPermiso !== "granted" ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => window.JarvisNotif.pedirPermiso().then(() => setNotifTick((t) => t + 1)),
@@ -7377,7 +7948,7 @@ function FilaObjetivoLP({ o, modelo, arrastre, onEditar, onEliminar, onToggleDet
   const cerca = dias != null && dias >= 0 && dias <= 14 && !o.completado;
   const tonoFecha = vencida ? "peligro" : cerca ? "acento" : "neutro";
   const todoHecho = hs.length > 0 && hechos === hs.length;
-  return /* @__PURE__ */ React.createElement("div", { className: "lp-row lp-hair-t flex items-start gap-2", style: { padding: "8px", background: "var(--col-4)" } }, /* @__PURE__ */ React.createElement(ManijaLP, { titulo: "Arrastr\xE1 para mover el objetivo", onIniciar: (e) => arrastre.iniciar(e, "objetivo", o.id) }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)", lineHeight: 1.35 } }, o.titulo, o.completado && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 500, color: "var(--success)", marginLeft: 6 } }, "cumplido")), (o.descripcion || o.origenTexto) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 400, color: "var(--text-secondary)", marginTop: 2, lineHeight: 1.45 } }, o.descripcion, o.origenTexto ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-muted)" } }, (o.descripcion ? " \xB7 " : "") + "ven\xEDa de " + o.origenTexto) : null)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 shrink-0 flex-wrap", style: { justifyContent: "flex-end", maxWidth: 300 } }, hs.length > 0 && /* @__PURE__ */ React.createElement(LpChip, { tono: todoHecho ? "logro" : "acento", mono: true, titulo: hechos + " de " + hs.length + " hitos cumplidos" }, /* @__PURE__ */ React.createElement(LpBarrita, { pct: hs.length ? Math.round(hechos / hs.length * 100) : 0, tono: todoHecho ? "logro" : null }), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 6 } }, hechos, "/", hs.length)), conMeta && /* @__PURE__ */ React.createElement(LpChip, { tono: pct >= 100 ? "logro" : "acento", mono: true, titulo: "Avance: " + pct + "%" }, (o.valor || 0) + "/" + o.meta, o.unidad ? " " + o.unidad : ""), !conMeta && !hs.length && o.unidad && /* @__PURE__ */ React.createElement(LpChip, null, o.unidad), o.fecha_objetivo && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "lp-row lp-hair-t flex items-start gap-2", style: { padding: "8px", background: "var(--col-4)" } }, /* @__PURE__ */ React.createElement(ManijaLP, { titulo: "Arrastr\xE1 para mover el objetivo", onIniciar: (e) => arrastre.iniciar(e, "objetivo", o.id) }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: "var(--text-primary)", lineHeight: 1.35 } }, o.titulo, o.completado && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 500, color: "var(--success)", marginLeft: 6 } }, "cumplido")), (hs.length > 0 || conMeta) && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2", style: { marginTop: 6, maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 6, borderRadius: 999, background: "var(--col-2)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: pct + "%", borderRadius: 999, background: pct >= 100 ? "var(--success)" : "#E6B54A" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" } }, pct, "%")), (o.descripcion || o.origenTexto) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 400, color: "var(--text-secondary)", marginTop: 2, lineHeight: 1.45 } }, o.descripcion, o.origenTexto ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-muted)" } }, (o.descripcion ? " \xB7 " : "") + "ven\xEDa de " + o.origenTexto) : null)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 shrink-0 flex-wrap", style: { justifyContent: "flex-end", maxWidth: 300 } }, hs.length > 0 && /* @__PURE__ */ React.createElement(LpChip, { tono: todoHecho ? "logro" : "acento", mono: true, titulo: hechos + " de " + hs.length + " hitos cumplidos" }, /* @__PURE__ */ React.createElement(LpBarrita, { pct: hs.length ? Math.round(hechos / hs.length * 100) : 0, tono: todoHecho ? "logro" : null }), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 6 } }, hechos, "/", hs.length)), conMeta && /* @__PURE__ */ React.createElement(LpChip, { tono: pct >= 100 ? "logro" : "acento", mono: true, titulo: "Avance: " + pct + "%" }, (o.valor || 0) + "/" + o.meta, o.unidad ? " " + o.unidad : ""), !conMeta && !hs.length && o.unidad && /* @__PURE__ */ React.createElement(LpChip, null, o.unidad), o.fecha_objetivo && /* @__PURE__ */ React.createElement(
     LpChip,
     {
       tono: tonoFecha,
@@ -7388,8 +7959,393 @@ function FilaObjetivoLP({ o, modelo, arrastre, onEditar, onEliminar, onToggleDet
     fmtFechaLP(o.fecha_objetivo)
   ), o.importancia && /* @__PURE__ */ React.createElement(LpPillPrioridad, { nivel: o.importancia })), /* @__PURE__ */ React.createElement("div", { className: "lp-row-actions flex items-center gap-0.5 shrink-0" }, /* @__PURE__ */ React.createElement(LpIconBtn, { titulo: "Editar el objetivo completo", onClick: onEditar }, /* @__PURE__ */ React.createElement(Pencil, { size: 13 })), /* @__PURE__ */ React.createElement(LpIconBtn, { titulo: "Abrir hitos y detalle", onClick: onToggleDetalle }, /* @__PURE__ */ React.createElement(ChevronDown, { size: 14, style: { transform: abierto ? "rotate(180deg)" : "none" } })), /* @__PURE__ */ React.createElement(LpIconBtn, { peligro: true, titulo: "Eliminar objetivo", onClick: onEliminar }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 }))));
 }
+function ExploradorLP({ modelo, objetivos, aplicar, guardarObjetivo, setObjetivo, eliminarObjetivo, toggleHito, eliminarHito, agregarObjetivoSemanal, setEditando }) {
+  const areas = ordLP(modelo.areas || []);
+  const [areaSel, setAreaSel] = useState(() => {
+    try {
+      return localStorage.getItem("martin:lp_area") || null;
+    } catch (_) {
+      return null;
+    }
+  });
+  const [abiertas, setAbiertas] = useState({});
+  const [filtro, setFiltro] = useState({});
+  const [sel, setSel] = useState(null);
+  const [nuevo, setNuevo] = useState({});
+  const [nuevoHito, setNuevoHito] = useState("");
+  const [nuevaSec, setNuevaSec] = useState("");
+  const [aviso, setAviso] = useState("");
+  const avisoRef = useRef(null);
+  const A = areas.find((a) => a.id === areaSel) || areas[0];
+  useEffect(() => {
+    if (A) {
+      try {
+        localStorage.setItem("martin:lp_area", A.id);
+      } catch (_) {
+      }
+    }
+  }, [A && A.id]);
+  useEffect(() => () => clearTimeout(avisoRef.current), []);
+  if (!A) {
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-8 text-center text-neutral-500" }, "No hay \xE1reas todav\xEDa. Cre\xE1 la primera en Organizaci\xF3n, arriba.");
+  }
+  const avisar = (t) => {
+    setAviso(t);
+    clearTimeout(avisoRef.current);
+    avisoRef.current = setTimeout(() => setAviso(""), 2400);
+  };
+  const prom = (os) => os.length ? Math.round(os.reduce((x, o) => x + pctObjetivoLP(o), 0) / os.length) : 0;
+  const RS = 2 * Math.PI * 16, RB = 2 * Math.PI * 34;
+  const secsDe = (aId) => ordLP((modelo.secciones || []).filter((s) => s.areaId === aId));
+  const subsDe = (sId) => ordLP((modelo.subsecciones || []).filter((x) => x.seccionId === sId));
+  const objsDeSec = (s) => {
+    const ids = subsDe(s.id).map((x) => x.id);
+    return ordLP(objetivos.filter((o) => o.padreTipo === "seccion" && o.padreId === s.id || o.padreTipo === "subseccion" && ids.includes(o.padreId)));
+  };
+  const nombreSub = (o) => {
+    if (o.padreTipo !== "subseccion") return "";
+    const x = (modelo.subsecciones || []).find((z) => z.id === o.padreId);
+    return x ? x.nombre : "";
+  };
+  const hitosOk = (o) => (o.hitos || []).filter((h) => hitoCompleto(h)).length;
+  const grupos = secsDe(A.id).map((s) => ({ s, objs: objsDeSec(s), subs: subsDe(s.id) }));
+  const directos = objetivos.filter((o) => o.padreTipo === "area" && o.padreId === A.id);
+  if (directos.length) grupos.push({ s: { id: "__area", nombre: "Sin secci\xF3n" }, objs: ordLP(directos), subs: [] });
+  const estaAbierta = (id, i) => abiertas[id] !== void 0 ? abiertas[id] : i < 2;
+  const objsA = lpDescendientes(modelo, "area", A.id).objetivos;
+  const pA = prom(objsA);
+  const oSel = sel ? objetivos.find((o) => o.id === sel) : null;
+  function crear(g) {
+    const txt = (nuevo[g.s.id] || "").trim();
+    if (!txt) return;
+    const f = filtro[g.s.id];
+    const enSub = f && f !== "todas";
+    const padreTipo = g.s.id === "__area" ? "area" : enSub ? "subseccion" : "seccion";
+    const padreId = g.s.id === "__area" ? A.id : enSub ? f : g.s.id;
+    const id = uidLP("o");
+    guardarObjetivo({
+      id,
+      padreTipo,
+      padreId,
+      titulo: txt,
+      descripcion: "",
+      fecha_objetivo: null,
+      unidad: "",
+      meta: null,
+      importancia: "media",
+      completado: false,
+      fecha_completado: null,
+      valor: 0,
+      hitos: [],
+      orden: 9999
+    });
+    setNuevo({ ...nuevo, [g.s.id]: "" });
+    setAbiertas({ ...abiertas, [g.s.id]: true });
+    setSel(id);
+    avisar("Objetivo creado en " + g.s.nombre);
+  }
+  function crearSeccion() {
+    const t = nuevaSec.trim();
+    if (!t) return;
+    aplicar((m) => ({ ...m, secciones: [...m.secciones || [], { id: uidLP("s"), areaId: A.id, nombre: t, descripcion: "", orden: 9999 }] }));
+    setNuevaSec("");
+    avisar("Secci\xF3n creada");
+  }
+  function marcarCumplido(o) {
+    const hs = o.hitos || [];
+    if (!hs.length) {
+      setObjetivo(o.id, { completado: !o.completado, fecha_completado: !o.completado ? hoyISO() : null });
+      return;
+    }
+    const todos = hs.every((h) => hitoCompleto(h));
+    aplicar((m) => ({ ...m, objetivos: m.objetivos.map((x) => x.id !== o.id ? x : {
+      ...x,
+      completado: !todos,
+      fecha_completado: !todos ? hoyISO() : null,
+      hitos: (x.hitos || []).map((h) => ({ ...h, completado: !todos, valor: h.meta && Number(h.meta) > 0 ? !todos ? Number(h.meta) : 0 : h.valor, fecha_completado: !todos ? hoyISO() : null }))
+    }) }));
+  }
+  function sumarHito(o) {
+    const t = nuevoHito.trim();
+    if (!t) return;
+    aplicar((m) => ({ ...m, objetivos: m.objetivos.map((x) => x.id !== o.id ? x : {
+      ...x,
+      completado: false,
+      fecha_completado: null,
+      hitos: [...x.hitos || [], { id: uidLP("h"), titulo: t, completado: false, fecha_completado: null, meta: null, valor: 0, unidad: "" }]
+    }) }));
+    setNuevoHito("");
+  }
+  function bajar(o) {
+    if (!agregarObjetivoSemanal) return;
+    const r = rutaLP(modelo, o);
+    agregarObjetivoSemanal({
+      categoria: r.area,
+      seccion: r.seccion || o.titulo,
+      subseccion: r.seccion ? o.titulo : "",
+      tarea: o.titulo,
+      dia: null,
+      hora: null,
+      prioridad: "semanal",
+      completado: false,
+      lp_id: o.id
+    });
+    avisar("\u201C" + o.titulo + "\u201D baj\xF3 a Obj. semanales");
+  }
+  const chipFecha = (o) => {
+    if (!o.fecha_objetivo) return { txt: "sin fecha", cls: "bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400" };
+    const d = diasHastaLP(o.fecha_objetivo);
+    const venc = d != null && d < 0 && !o.completado;
+    const cerca = d != null && d >= 0 && d <= 14 && !o.completado;
+    return {
+      txt: (venc ? "venci\xF3 " : "") + fmtFechaLP(o.fecha_objetivo),
+      cls: venc ? "bg-laca-600 text-white" : cerca ? "bg-amber-500 text-neutral-950" : "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300"
+    };
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: `grid gap-4 items-start grid-cols-1 lg:grid-cols-[270px_minmax(0,1fr)] ${oSel ? "xl:grid-cols-[270px_minmax(0,1fr)_390px]" : ""}` }, /* @__PURE__ */ React.createElement("nav", { "aria-label": "\xC1reas", className: "flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0 lg:sticky lg:top-24" }, /* @__PURE__ */ React.createElement("div", { className: "hidden lg:block text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 px-1.5" }, "\xC1reas"), areas.map((a) => {
+    const os = lpDescendientes(modelo, "area", a.id).objetivos;
+    const p = prom(os);
+    const on = a.id === A.id;
+    const nSec = secsDe(a.id).length;
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: a.id,
+        type: "button",
+        onClick: () => {
+          setAreaSel(a.id);
+          setSel(null);
+        },
+        "aria-pressed": on,
+        className: `flex items-center gap-3 shrink-0 min-w-[230px] lg:min-w-0 w-full text-left rounded-2xl px-3.5 py-3 transition-colors ${on ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"}`
+      },
+      /* @__PURE__ */ React.createElement(
+        "span",
+        {
+          className: "font-serif w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-lg font-extrabold",
+          style: { background: areaBg(a.colorToken), color: areaFg(a.colorToken) }
+        },
+        (a.nombre || "?").charAt(0)
+      ),
+      /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[15px] font-bold truncate" }, a.nombre), /* @__PURE__ */ React.createElement("span", { className: `block text-xs tabular-nums mt-0.5 ${on ? "opacity-80" : "text-neutral-500 dark:text-neutral-400"}` }, nSec, " ", nSec === 1 ? "secci\xF3n" : "secciones", " \xB7 ", os.length, " ", os.length === 1 ? "objetivo" : "objetivos")),
+      /* @__PURE__ */ React.createElement("span", { className: "relative w-10 h-10 shrink-0" }, /* @__PURE__ */ React.createElement("svg", { width: "40", height: "40", viewBox: "0 0 40 40", "aria-hidden": "true" }, /* @__PURE__ */ React.createElement("circle", { cx: "20", cy: "20", r: "16", fill: "none", strokeWidth: "4", className: on ? "stroke-amber-500/25 dark:stroke-neutral-950/25" : "stroke-neutral-100 dark:stroke-neutral-800" }), p > 0 && /* @__PURE__ */ React.createElement(
+        "circle",
+        {
+          cx: "20",
+          cy: "20",
+          r: "16",
+          fill: "none",
+          strokeWidth: "4",
+          strokeLinecap: "round",
+          className: on ? "stroke-amber-500 dark:stroke-neutral-950" : "stroke-amber-500",
+          strokeDasharray: `${RS * p / 100} ${RS}`,
+          transform: "rotate(-90 20 20)"
+        }
+      )), /* @__PURE__ */ React.createElement("span", { className: "absolute inset-0 flex items-center justify-center text-[10px] font-bold tabular-nums" }, p))
+    );
+  })), /* @__PURE__ */ React.createElement("main", { className: "flex flex-col gap-3 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400" }, /* @__PURE__ */ React.createElement("span", null, "I have a dream"), /* @__PURE__ */ React.createElement("span", null, "\u203A"), /* @__PURE__ */ React.createElement("span", { className: "font-bold text-neutral-900 dark:text-neutral-50" }, A.nombre)), /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 sm:p-6 flex items-center gap-5 flex-wrap", style: { background: areaBg(A.colorToken), color: areaFg(A.colorToken) } }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[200px]" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-4xl font-extrabold leading-none tracking-tight" }, A.nombre), /* @__PURE__ */ React.createElement("div", { className: "text-sm font-semibold mt-2 opacity-85 tabular-nums" }, grupos.length, " ", grupos.length === 1 ? "secci\xF3n" : "secciones", " \xB7 ", objsA.length, " ", objsA.length === 1 ? "objetivo" : "objetivos"), A.descripcion && /* @__PURE__ */ React.createElement("div", { className: "text-sm mt-1 opacity-80" }, A.descripcion)), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[220px] max-w-md" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between text-sm font-bold tabular-nums" }, /* @__PURE__ */ React.createElement("span", null, "Avance del \xE1rea"), /* @__PURE__ */ React.createElement("span", null, pA, "%")), /* @__PURE__ */ React.createElement("div", { className: "h-2.5 rounded-full mt-2 overflow-hidden", style: { background: "rgba(0,0,0,0.12)" } }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full", style: { width: pA + "%", background: areaFg(A.colorToken) } })))), grupos.map((g, i) => {
+    const ab = estaAbierta(g.s.id, i);
+    const p = prom(g.objs);
+    const f = filtro[g.s.id] || "todas";
+    const visibles = f === "todas" ? g.objs : g.objs.filter((o) => o.padreTipo === "subseccion" && o.padreId === f);
+    return /* @__PURE__ */ React.createElement("section", { key: g.s.id, className: "rounded-2xl bg-white dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setAbiertas({ ...abiertas, [g.s.id]: !ab }),
+        "aria-expanded": ab,
+        className: "w-full flex items-center gap-3.5 px-5 py-4 min-h-[64px] text-left"
+      },
+      /* @__PURE__ */ React.createElement(ChevronRight, { size: 18, strokeWidth: 2.25, className: "text-neutral-400 shrink-0 transition-transform duration-200", style: { transform: ab ? "rotate(90deg)" : "none" } }),
+      /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: "block font-serif text-xl font-bold truncate" }, g.s.nombre), /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-neutral-500 dark:text-neutral-400 tabular-nums mt-0.5" }, g.objs.length, " ", g.objs.length === 1 ? "objetivo" : "objetivos", g.subs.length ? ` \xB7 ${g.subs.length} ${g.subs.length === 1 ? "subsecci\xF3n" : "subsecciones"}` : "")),
+      /* @__PURE__ */ React.createElement("span", { className: "hidden sm:block w-40 h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "block h-full rounded-full", style: { width: p + "%", background: areaFg(A.colorToken) } })),
+      /* @__PURE__ */ React.createElement("span", { className: "w-11 text-right text-sm font-bold tabular-nums" }, p, "%")
+    ), ab && /* @__PURE__ */ React.createElement("div", { className: "px-5 pb-5 flex flex-col gap-2.5" }, g.subs.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, [{ id: "todas", nombre: "Todas" }].concat(g.subs).map((x) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: x.id,
+        type: "button",
+        onClick: () => setFiltro({ ...filtro, [g.s.id]: x.id }),
+        className: `min-h-[34px] px-3 rounded-full text-xs font-bold ${f === x.id ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300"}`
+      },
+      x.nombre
+    ))), visibles.map((o) => {
+      const p2 = pctObjetivoLP(o);
+      const hecho = o.completado || p2 >= 100;
+      const hs = o.hitos || [];
+      const fc = chipFecha(o);
+      const on = sel === o.id;
+      const sub = nombreSub(o);
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: o.id,
+          className: `flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${on ? "bg-amber-50 dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-800/60"}`,
+          style: on ? { boxShadow: `inset 4px 0 0 #E6B54A` } : void 0
+        },
+        /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            type: "button",
+            onClick: () => marcarCumplido(o),
+            "aria-label": hecho ? "Desmarcar cumplido" : "Marcar cumplido",
+            "aria-pressed": hecho,
+            className: `w-[26px] h-[26px] rounded-full shrink-0 flex items-center justify-center border-2 ${hecho ? "bg-jade-600 border-jade-600 text-white" : "border-neutral-300 dark:border-neutral-600 text-transparent"}`
+          },
+          /* @__PURE__ */ React.createElement(Check, { size: 14, strokeWidth: 3 })
+        ),
+        /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setSel(on ? null : o.id), className: "flex-1 min-w-0 flex items-center gap-3.5 text-left" }, /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-[15px] font-semibold ${hecho ? "line-through text-neutral-400" : ""}` }, o.titulo), /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 tabular-nums truncate" }, [sub, hs.length ? `${hitosOk(o)}/${hs.length} hitos` : "sin hitos"].filter(Boolean).join(" \xB7 "))), /* @__PURE__ */ React.createElement("span", { className: "hidden md:block w-28 h-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("span", { className: `block h-full rounded-full ${hecho ? "bg-jade-600" : "bg-amber-500"}`, style: { width: p2 + "%" } })), /* @__PURE__ */ React.createElement("span", { className: "w-10 text-right text-[13px] font-bold tabular-nums shrink-0" }, p2, "%"), /* @__PURE__ */ React.createElement("span", { className: `hidden sm:inline-block min-w-[70px] text-center text-xs font-bold px-2.5 py-1 rounded-lg tabular-nums shrink-0 ${fc.cls}` }, fc.txt))
+      );
+    }), g.objs.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm text-neutral-600 dark:text-neutral-300" }, "Esta secci\xF3n todav\xEDa no tiene objetivos. Escrib\xED el primero ac\xE1 abajo y apret\xE1 Enter."), g.objs.length > 0 && visibles.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 text-sm text-neutral-500" }, "Nada en esta subsecci\xF3n todav\xEDa."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: nuevo[g.s.id] || "",
+        onChange: (e) => setNuevo({ ...nuevo, [g.s.id]: e.target.value }),
+        onKeyDown: (e) => {
+          if (e.key === "Enter") crear(g);
+        },
+        placeholder: `Nuevo objetivo en ${f !== "todas" ? (g.subs.find((x) => x.id === f) || {}).nombre : g.s.nombre}\u2026`,
+        "aria-label": `Nuevo objetivo en ${g.s.nombre}`,
+        className: "flex-1 min-h-[44px] px-3.5 rounded-xl border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-700 bg-transparent text-sm outline-none focus:border-amber-500"
+      }
+    ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => crear(g), className: "min-h-[44px] px-4 rounded-xl bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950 text-sm font-bold" }, "Agregar"))));
+  }), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 items-center rounded-2xl border-2 border-dashed border-neutral-300 dark:border-neutral-700 p-2 pl-4" }, /* @__PURE__ */ React.createElement(Plus, { size: 16, className: "text-neutral-400 shrink-0" }), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: nuevaSec,
+      onChange: (e) => setNuevaSec(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Enter") crearSeccion();
+      },
+      placeholder: `Nueva secci\xF3n en ${A.nombre} (Enter)`,
+      "aria-label": `Nueva secci\xF3n en ${A.nombre}`,
+      className: "flex-1 min-h-[40px] bg-transparent text-sm font-semibold outline-none"
+    }
+  ))), oSel && (() => {
+    const o = oSel;
+    const p = pctObjetivoLP(o);
+    const hs = o.hitos || [];
+    const r = rutaLP(modelo, o);
+    const area = areas.find((a) => a.nombre === r.area) || A;
+    const secsMismaArea = secsDe(area.id);
+    const secActual = o.padreTipo === "seccion" ? o.padreId : o.padreTipo === "subseccion" ? ((modelo.subsecciones || []).find((x) => x.id === o.padreId) || {}).seccionId : null;
+    return /* @__PURE__ */ React.createElement("aside", { "aria-label": "Detalle del objetivo", className: "xl:sticky xl:top-24 rounded-2xl bg-white dark:bg-neutral-900 p-5 flex flex-col gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold px-2.5 py-1 rounded-full truncate", style: { background: areaBg(area.colorToken), color: areaFg(area.colorToken) } }, [r.area, r.seccion, r.subseccion].filter(Boolean).join(" \u203A ")), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setSel(null),
+        "aria-label": "Cerrar detalle",
+        className: "ml-auto w-10 h-10 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 flex items-center justify-center shrink-0"
+      },
+      /* @__PURE__ */ React.createElement(X, { size: 16 })
+    )), /* @__PURE__ */ React.createElement("label", { className: "flex flex-col gap-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400" }, "Objetivo"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        key: o.id + "-t",
+        defaultValue: o.titulo,
+        onBlur: (e) => {
+          const v = e.target.value.trim();
+          if (v && v !== o.titulo) setObjetivo(o.id, { titulo: v });
+        },
+        onKeyDown: (e) => {
+          if (e.key === "Enter") e.target.blur();
+        },
+        className: "font-serif text-2xl font-bold bg-transparent border-b-2 border-neutral-200 dark:border-neutral-700 focus:border-amber-500 outline-none pb-1.5"
+      }
+    )), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4" }, /* @__PURE__ */ React.createElement("svg", { width: "84", height: "84", viewBox: "0 0 84 84", "aria-hidden": "true", className: "shrink-0" }, /* @__PURE__ */ React.createElement("circle", { cx: "42", cy: "42", r: "34", fill: "none", strokeWidth: "10", className: "stroke-neutral-100 dark:stroke-neutral-800" }), p > 0 && /* @__PURE__ */ React.createElement(
+      "circle",
+      {
+        cx: "42",
+        cy: "42",
+        r: "34",
+        fill: "none",
+        strokeWidth: "10",
+        strokeLinecap: "round",
+        className: p >= 100 ? "stroke-jade-600" : "stroke-amber-500",
+        strokeDasharray: `${RB * p / 100} ${RB}`,
+        transform: "rotate(-90 42 42)"
+      }
+    )), /* @__PURE__ */ React.createElement("div", { className: "tabular-nums" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-4xl font-extrabold leading-none" }, p, "%"), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 dark:text-neutral-400 mt-1" }, hs.length ? `${hitosOk(o)} de ${hs.length} hitos` : "sin hitos")), /* @__PURE__ */ React.createElement("label", { className: "ml-auto flex flex-col items-end gap-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400" }, "Fecha"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "date",
+        value: o.fecha_objetivo || "",
+        onChange: (e) => setObjetivo(o.id, { fecha_objetivo: e.target.value || null }),
+        className: "text-sm font-bold bg-neutral-100 dark:bg-neutral-800 rounded-lg px-2 py-1.5 outline-none focus:ring-2 focus:ring-amber-500"
+      }
+    ))), /* @__PURE__ */ React.createElement(
+      "textarea",
+      {
+        key: o.id + "-d",
+        defaultValue: o.descripcion || "",
+        rows: 2,
+        placeholder: "Para qu\xE9 es este objetivo (opcional)",
+        onBlur: (e) => {
+          if (e.target.value !== (o.descripcion || "")) setObjetivo(o.id, { descripcion: e.target.value });
+        },
+        className: "text-sm bg-neutral-100 dark:bg-neutral-800 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-amber-500 resize-y"
+      }
+    ), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mb-1.5" }, "Hitos"), hs.map((h) => {
+      const ok = hitoCompleto(h);
+      return /* @__PURE__ */ React.createElement("div", { key: h.id, className: "flex items-center gap-2 border-t border-neutral-100 dark:border-neutral-800" }, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => toggleHito(o.id, h.id),
+          "aria-pressed": ok,
+          className: "flex-1 flex items-center gap-3 py-2 min-h-[44px] text-left"
+        },
+        /* @__PURE__ */ React.createElement("span", { className: `w-[22px] h-[22px] rounded-md shrink-0 flex items-center justify-center border-2 ${ok ? "bg-jade-600 border-jade-600 text-white" : "border-neutral-300 dark:border-neutral-600 text-transparent"}` }, /* @__PURE__ */ React.createElement(Check, { size: 12, strokeWidth: 3.5 })),
+        /* @__PURE__ */ React.createElement("span", { className: `text-sm ${ok ? "line-through text-neutral-400" : ""}` }, h.titulo, h.meta && Number(h.meta) > 0 ? /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500 ml-1.5 tabular-nums" }, h.valor || 0, "/", h.meta, " ", h.unidad) : null)
+      ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => eliminarHito(o.id, h.id), "aria-label": "Eliminar hito", className: "w-9 h-9 rounded-lg text-neutral-400 hover:text-laca-600 flex items-center justify-center" }, /* @__PURE__ */ React.createElement(X, { size: 14 })));
+    }), hs.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 py-1.5" }, "Sin hitos: el avance se marca con el c\xEDrculo. Sum\xE1 hitos para medirlo por partes."), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: nuevoHito,
+        onChange: (e) => setNuevoHito(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter") sumarHito(o);
+        },
+        placeholder: "+ Nuevo hito (Enter)",
+        "aria-label": "Nuevo hito",
+        className: "w-full mt-2 min-h-[42px] px-3 rounded-xl border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-700 bg-transparent text-sm outline-none focus:border-amber-500"
+      }
+    )), secsMismaArea.filter((s) => s.id !== secActual).length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mb-1.5" }, "Mover a otra secci\xF3n"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, secsMismaArea.filter((s) => s.id !== secActual).map((s) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: s.id,
+        type: "button",
+        onClick: () => {
+          aplicar((m) => lpMoverObjetivo(m, o.id, "seccion", s.id, null));
+          setAbiertas({ ...abiertas, [s.id]: true });
+          avisar("Movido a " + s.nombre);
+        },
+        className: "min-h-[36px] px-3 rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-bold text-neutral-700 dark:text-neutral-300"
+      },
+      s.nombre,
+      " \u2192"
+    )))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 flex-wrap" }, agregarObjetivoSemanal && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => bajar(o), className: "flex-1 min-h-[46px] px-4 rounded-xl bg-jade-600 dark:bg-jade-500 text-white text-sm font-bold flex items-center justify-center gap-2" }, /* @__PURE__ */ React.createElement(ArrowDownToLine, { size: 16 }), " Bajar a la semana"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEditando(o.id), className: "min-h-[46px] px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-bold flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Pencil, { size: 14 }), " Todo"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      eliminarObjetivo(o.id);
+      setSel(null);
+    }, className: "min-h-[46px] px-4 rounded-xl border-[1.5px] border-neutral-200 dark:border-neutral-700 text-laca-600 dark:text-laca-400 text-sm font-bold" }, "Eliminar")));
+  })(), aviso && /* @__PURE__ */ React.createElement("div", { role: "status", className: "fixed left-1/2 -translate-x-1/2 bottom-24 md:bottom-6 z-[90] px-4 py-3 rounded-xl bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950 text-sm font-bold shadow-xl jarvis-materializar" }, aviso));
+}
 function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracionInfo }) {
   const [showForm, setShowForm] = useState(false);
+  const [vistaLP, setVistaLP] = useState(() => {
+    try {
+      return localStorage.getItem("martin:lp_vista") || "explorador";
+    } catch (_) {
+      return "explorador";
+    }
+  });
+  const cambiarVistaLP = (v) => {
+    setVistaLP(v);
+    try {
+      localStorage.setItem("martin:lp_vista", v);
+    } catch (_) {
+    }
+  };
   const [padreNuevo, setPadreNuevo] = useState(null);
   const [editando, setEditando] = useState(null);
   const [detalle, setDetalle] = useState(null);
@@ -7635,7 +8591,17 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
     });
     return out;
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "lp-view space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "I have a dream"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "El rumbo de cada \xE1rea de tu vida. Los hitos miden el avance; bajalos a la semana para ejecutarlos.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 items-center" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "lp-view space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "I have a dream"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "El rumbo de cada \xE1rea de tu vida. Los hitos miden el avance; bajalos a la semana para ejecutarlos.")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 items-center flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex p-1 rounded-xl bg-white dark:bg-neutral-900", role: "group", "aria-label": "Vista" }, [["explorador", "Explorador"], ["tabla", "Tabla"]].map(([k, l]) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: k,
+      type: "button",
+      onClick: () => cambiarVistaLP(k),
+      "aria-pressed": vistaLP === k,
+      className: `min-h-[36px] px-3.5 rounded-lg text-sm font-bold ${vistaLP === k ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "text-neutral-600 dark:text-neutral-300"}`
+    },
+    l
+  ))), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -7671,7 +8637,63 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
         setPadreNuevo(null);
       }
     }
-  )), /* @__PURE__ */ React.createElement(OrganizacionEditor, { modelo, aplicar }), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between", style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Trophy, { size: 15, style: { color: "var(--accent)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, "Avance general")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--accent)" } }, avanceGlobal, "%")), /* @__PURE__ */ React.createElement("div", { style: { height: 3, borderRadius: 999, background: "var(--col-2)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: avanceGlobal + "%", background: "var(--accent)" } })), cumplidos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--success)", background: "var(--success-bg)", borderRadius: 999, padding: "2px 8px", display: "inline-block", marginTop: 10 } }, cumplidos.length, " cumplido", cumplidos.length > 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { className: "lp-scroll" }, /* @__PURE__ */ React.createElement("div", { className: "lp-min space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex lp-etiquetas", style: { fontSize: 11, fontWeight: 400, color: "var(--text-muted)", paddingLeft: 4, gap: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_AREA, flexShrink: 0 } }, "\xC1rea"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SEC, flexShrink: 0 } }, "Secci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SUB, flexShrink: 0 } }, "Subsecci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Objetivos")), areas.map((a) => {
+  )), /* @__PURE__ */ React.createElement(OrganizacionEditor, { modelo, aplicar }), (() => {
+    const RING = 2 * Math.PI * 34;
+    const todosHitos = objetivos.reduce((acc, o) => acc.concat(o.hitos || []), []);
+    const hitosOk = todosHitos.filter((h) => hitoCompleto(h)).length;
+    const conFecha = activos.filter((o) => o.fecha_objetivo).map((o) => ({ o, d: diasHastaLP(o.fecha_objetivo) })).filter((x) => x.d != null);
+    const vencidos = conFecha.filter((x) => x.d < 0);
+    const proximo = conFecha.filter((x) => x.d >= 0).sort((x, y) => x.d - y.d)[0];
+    const porArea = areas.map((ar) => {
+      const os = lpDescendientes(modelo, "area", ar.id).objetivos;
+      return { ar, n: os.length, pct: os.length ? Math.round(os.reduce((x, o) => x + pctObjetivoLP(o), 0) / os.length) : 0 };
+    }).filter((x) => x.n > 0);
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-4 gap-3" }, /* @__PURE__ */ React.createElement("section", { className: "col-span-2 lg:col-span-1 rounded-2xl p-5 bg-jade-600 dark:bg-jade-500 text-white flex items-center gap-4" }, /* @__PURE__ */ React.createElement("svg", { width: "88", height: "88", viewBox: "0 0 84 84", "aria-hidden": "true", className: "shrink-0" }, /* @__PURE__ */ React.createElement("circle", { cx: "42", cy: "42", r: "34", fill: "none", stroke: "rgba(255,253,248,0.2)", strokeWidth: "10" }), avanceGlobal > 0 && /* @__PURE__ */ React.createElement(
+      "circle",
+      {
+        cx: "42",
+        cy: "42",
+        r: "34",
+        fill: "none",
+        stroke: "#E6B54A",
+        strokeWidth: "10",
+        strokeLinecap: "round",
+        strokeDasharray: `${RING * avanceGlobal / 100} ${RING}`,
+        transform: "rotate(-90 42 42)"
+      }
+    )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest" }, "Avance general"), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums mt-1" }, avanceGlobal, "%"))), /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 bg-amber-500 text-neutral-950 flex flex-col justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest" }, "Objetivos"), /* @__PURE__ */ React.createElement("span", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums" }, activos.length), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold" }, "en curso \xB7 ", cumplidos.length, " cumplido", cumplidos.length === 1 ? "" : "s")), /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 bg-white dark:bg-neutral-900 flex flex-col justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400" }, "Hitos"), /* @__PURE__ */ React.createElement("span", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums" }, hitosOk, /* @__PURE__ */ React.createElement("span", { className: "text-2xl text-neutral-400" }, "/", todosHitos.length)), /* @__PURE__ */ React.createElement("div", { className: "h-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-amber-500", style: { width: (todosHitos.length ? Math.round(hitosOk / todosHitos.length * 100) : 0) + "%" } }))), /* @__PURE__ */ React.createElement("section", { className: `rounded-2xl p-5 flex flex-col justify-between gap-2 ${vencidos.length ? "bg-laca-600 text-white" : "bg-white dark:bg-neutral-900"}` }, /* @__PURE__ */ React.createElement("span", { className: `text-xs font-bold uppercase tracking-widest ${vencidos.length ? "" : "text-neutral-500 dark:text-neutral-400"}` }, vencidos.length ? "Vencidos" : "Pr\xF3ximo vencimiento"), vencidos.length ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "font-serif text-5xl font-extrabold leading-none tabular-nums" }, vencidos.length), /* @__PURE__ */ React.createElement("span", { className: "text-sm opacity-90 truncate" }, vencidos.map((x) => x.o.titulo).join(" \xB7 "))) : proximo ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "font-serif text-xl font-bold leading-tight line-clamp-2" }, proximo.o.titulo), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-neutral-500 dark:text-neutral-400 tabular-nums" }, fmtFechaLP(proximo.o.fecha_objetivo), " \xB7 ", proximo.d === 0 ? "hoy" : "faltan " + proximo.d + " d\xEDas")) : /* @__PURE__ */ React.createElement("span", { className: "text-sm text-neutral-500 dark:text-neutral-400" }, "Ning\xFAn objetivo tiene fecha."))), vistaLP === "tabla" && porArea.length > 0 && /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 bg-white dark:bg-neutral-900" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-xl font-bold mb-3" }, "Avance por \xE1rea"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-8 gap-y-3" }, porArea.map(({ ar, n, pct }) => /* @__PURE__ */ React.createElement("div", { key: ar.id, className: "flex items-center gap-3 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: "w-3 h-3 rounded shrink-0", style: { background: areaBg(ar.colorToken), boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.15)" } }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold w-36 truncate" }, ar.nombre), /* @__PURE__ */ React.createElement("span", { className: "flex-1 h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "block h-full rounded-full bg-amber-500", style: { width: pct + "%" } })), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tabular-nums w-16 text-right text-neutral-600 dark:text-neutral-300" }, pct, "% \xB7 ", n))))));
+  })(), vistaLP === "explorador" && editando && (() => {
+    const o = objetivos.find((x) => x.id === editando);
+    if (!o) return null;
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl", style: { padding: 12, background: "var(--col-3)" } }, /* @__PURE__ */ React.createElement(
+      PanelObjetivoLP,
+      {
+        modelo,
+        inicial: o,
+        hitosSlot: renderHitosEditor(o),
+        onGuardar: guardarObjetivo,
+        onCancelar: () => setEditando(null),
+        onEliminar: () => eliminarObjetivo(o.id)
+      }
+    ));
+  })(), vistaLP === "explorador" && /* @__PURE__ */ React.createElement(
+    ExploradorLP,
+    {
+      modelo,
+      objetivos,
+      aplicar,
+      guardarObjetivo,
+      setObjetivo,
+      eliminarObjetivo,
+      toggleHito,
+      eliminarHito,
+      agregarObjetivoSemanal,
+      setEditando: (id) => {
+        setEditando(id);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
+  ), vistaLP === "tabla" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "lp-scroll" }, /* @__PURE__ */ React.createElement("div", { className: "lp-min space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex lp-etiquetas", style: { fontSize: 11, fontWeight: 400, color: "var(--text-muted)", paddingLeft: 4, gap: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_AREA, flexShrink: 0 } }, "\xC1rea"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SEC, flexShrink: 0 } }, "Secci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { width: LP_W_SUB, flexShrink: 0 } }, "Subsecci\xF3n"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Objetivos")), areas.map((a) => {
     const secs = ordLP((modelo.secciones || []).filter((s) => s.areaId === a.id));
     const objsDirectos = ordLP(objetivos.filter((o) => o.padreTipo === "area" && o.padreId === a.id));
     const d = lpDescendientes(modelo, "area", a.id);
@@ -7685,11 +8707,11 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
       {
         "data-drop-tipo": "area",
         "data-drop-id": a.id,
-        className: "shrink-0 flex flex-col justify-center",
-        style: { width: LP_W_AREA, background: areaBg(a.colorToken), padding: "12px 10px", ...dropStyle("area", a.id) || {} }
+        className: "shrink-0 flex flex-col justify-start",
+        style: { width: LP_W_AREA, background: areaBg(a.colorToken), padding: "16px 12px", ...dropStyle("area", a.id) || {} }
       },
-      /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-1.5" }, /* @__PURE__ */ React.createElement(ManijaLP, { titulo: "Reordenar el \xE1rea", onIniciar: (e) => arrastre.iniciar(e, "area", a.id) }), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: areaFg(a.colorToken), lineHeight: 1.25, textTransform: "uppercase", letterSpacing: "0.03em", overflowWrap: "anywhere" } }, a.nombre), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 500, color: areaFg(a.colorToken), opacity: 0.82, marginTop: 3 } }, objsArea.length, " ", objsArea.length === 1 ? "objetivo" : "objetivos"))),
-      /* @__PURE__ */ React.createElement("div", { style: { height: 3, borderRadius: 999, background: "var(--track-on-tint)", overflow: "hidden", marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: pctArea + "%", background: areaFg(a.colorToken) } }))
+      /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-1.5" }, /* @__PURE__ */ React.createElement(ManijaLP, { titulo: "Reordenar el \xE1rea", onIniciar: (e) => arrastre.iniciar(e, "area", a.id) }), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { className: "font-serif", style: { fontSize: 17, fontWeight: 800, color: areaFg(a.colorToken), lineHeight: 1.15, overflowWrap: "anywhere" } }, a.nombre), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 500, color: areaFg(a.colorToken), opacity: 0.82, marginTop: 3 } }, objsArea.length, " ", objsArea.length === 1 ? "objetivo" : "objetivos"))),
+      /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2", style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 6, borderRadius: 999, background: "var(--track-on-tint)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: pctArea + "%", background: areaFg(a.colorToken) } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: areaFg(a.colorToken), fontVariantNumeric: "tabular-nums" } }, pctArea, "%"))
     ), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, grupos.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "14px 12px", fontSize: 12, color: "var(--text-muted)", background: "var(--col-4)" } }, "Sin secciones todav\xEDa."), grupos.map((g, gi) => {
       const s = g.sec;
       const subs = s ? ordLP((modelo.subsecciones || []).filter((ss) => ss.seccionId === s.id)) : [];
@@ -7775,7 +8797,7 @@ function ObjetivosLargoPlazo({ modelo, aplicar, agregarObjetivoSemanal, migracio
       ...m,
       secciones: [...m.secciones, { id: uidLP("s"), areaId: a.id, nombre: "Nueva secci\xF3n", descripcion: "", orden: m.secciones.filter((x) => x.areaId === a.id).length }]
     })) }, "+ secci\xF3n")), /* @__PURE__ */ React.createElement("div", { className: "lp-hair-l", style: { flex: 1, background: "var(--col-4)" } })))));
-  }), areas.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: 32, fontSize: 13, color: "var(--text-muted)" } }, "No hay \xE1reas todav\xEDa. Cre\xE1 la primera en Organizaci\xF3n."))), huerfanos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 12, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: "var(--col-2)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, "Sin \xE1rea"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-secondary)", marginTop: 2 } }, huerfanos.length, " ", huerfanos.length === 1 ? "objetivo qued\xF3" : "objetivos quedaron", " sin un \xE1rea existente. Reubicalos o eliminalos \u2014 no se van a borrar solos.")), /* @__PURE__ */ React.createElement("div", null, huerfanos.map((o) => /* @__PURE__ */ React.createElement("div", { key: o.id, className: "lp-row lp-hair-t", style: { padding: "8px 12px" } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2" }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, o.titulo), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, o.origenTexto ? "ven\xEDa de " + o.origenTexto : "sin procedencia registrada")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 shrink-0 flex-wrap", style: { justifyContent: "flex-end" } }, (o.hitos || []).length > 0 && /* @__PURE__ */ React.createElement(LpChip, { tono: "acento", mono: true }, /* @__PURE__ */ React.createElement(LpBarrita, { pct: Math.round((o.hitos || []).filter((h) => hitoCompleto(h)).length / (o.hitos || []).length * 100) }), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 6 } }, (o.hitos || []).filter((h) => hitoCompleto(h)).length, "/", (o.hitos || []).length)), o.fecha_objetivo && /* @__PURE__ */ React.createElement(LpChip, { mono: true }, fmtFechaLP(o.fecha_objetivo)), o.importancia && /* @__PURE__ */ React.createElement(LpPillPrioridad, { nivel: o.importancia })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-0.5 shrink-0" }, /* @__PURE__ */ React.createElement(LpIconBtn, { titulo: "Reubicar", onClick: () => setMoverObj(moverObj === o.id ? null : o.id) }, /* @__PURE__ */ React.createElement(ArrowDownToLine, { size: 13 })), /* @__PURE__ */ React.createElement(LpIconBtn, { peligro: true, titulo: "Eliminar objetivo", onClick: () => eliminarObjetivo(o.id) }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 })))), moverObj === o.id && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, /* @__PURE__ */ React.createElement(
+  }), areas.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: 32, fontSize: 13, color: "var(--text-muted)" } }, "No hay \xE1reas todav\xEDa. Cre\xE1 la primera en Organizaci\xF3n.")))), huerfanos.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 12, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: "var(--col-2)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, "Sin \xE1rea"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-secondary)", marginTop: 2 } }, huerfanos.length, " ", huerfanos.length === 1 ? "objetivo qued\xF3" : "objetivos quedaron", " sin un \xE1rea existente. Reubicalos o eliminalos \u2014 no se van a borrar solos.")), /* @__PURE__ */ React.createElement("div", null, huerfanos.map((o) => /* @__PURE__ */ React.createElement("div", { key: o.id, className: "lp-row lp-hair-t", style: { padding: "8px 12px" } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start gap-2" }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 500, color: "var(--text-primary)" } }, o.titulo), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, o.origenTexto ? "ven\xEDa de " + o.origenTexto : "sin procedencia registrada")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 shrink-0 flex-wrap", style: { justifyContent: "flex-end" } }, (o.hitos || []).length > 0 && /* @__PURE__ */ React.createElement(LpChip, { tono: "acento", mono: true }, /* @__PURE__ */ React.createElement(LpBarrita, { pct: Math.round((o.hitos || []).filter((h) => hitoCompleto(h)).length / (o.hitos || []).length * 100) }), /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 6 } }, (o.hitos || []).filter((h) => hitoCompleto(h)).length, "/", (o.hitos || []).length)), o.fecha_objetivo && /* @__PURE__ */ React.createElement(LpChip, { mono: true }, fmtFechaLP(o.fecha_objetivo)), o.importancia && /* @__PURE__ */ React.createElement(LpPillPrioridad, { nivel: o.importancia })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-0.5 shrink-0" }, /* @__PURE__ */ React.createElement(LpIconBtn, { titulo: "Reubicar", onClick: () => setMoverObj(moverObj === o.id ? null : o.id) }, /* @__PURE__ */ React.createElement(ArrowDownToLine, { size: 13 })), /* @__PURE__ */ React.createElement(LpIconBtn, { peligro: true, titulo: "Eliminar objetivo", onClick: () => eliminarObjetivo(o.id) }, /* @__PURE__ */ React.createElement(Trash2, { size: 13 })))), moverObj === o.id && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, /* @__PURE__ */ React.createElement(
     MoverAPanelLP,
     {
       titulo: "Reubicar en",
@@ -10976,5 +11998,14 @@ function App() {
 })();
 
 </script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("sw.js").catch(function (e) {
+          console.warn("[Jarvis] service worker no registrado:", e);
+        });
+      });
+    }
+  </script>
 </body>
 </html>
