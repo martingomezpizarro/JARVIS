@@ -1888,6 +1888,147 @@
     })();
   </script>
 
+  <!-- ==================================================================
+       Hablarle a Jarvis — Fase 2 del cerebro
+       ------------------------------------------------------------------
+       Graba, convierte a WAV 16 kHz mono (lo que mejor entiende Whisper,
+       y funciona igual en Android, iPhone y la compu), manda al cerebro y
+       escucha la Bandeja jarvis/{uid}/bandeja. NO agenda nada: la propuesta
+       se confirma en la app, que la crea con su propia lógica (agregarEvento).
+       ================================================================== -->
+  <script>
+    (function () {
+      var MAX_SEG = 45;
+      var MUDA = "jarvis:voz_muda";
+      function cerebro() { return window.JarvisPush ? window.JarvisPush.cerebro() : ""; }
+      function puedeGrabar() {
+        return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+      }
+
+      // Devuelve un control { detener, cancelar }. alTerminar(blob) se llama al cortar.
+      function grabar(alTerminar, alError) {
+        return navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+          .then(function (stream) {
+            var rec = new MediaRecorder(stream), partes = [], cancelado = false;
+            rec.ondataavailable = function (e) { if (e.data && e.data.size) partes.push(e.data); };
+            rec.onstop = function () {
+              stream.getTracks().forEach(function (t) { t.stop(); });
+              clearTimeout(tope);
+              if (!cancelado) alTerminar(new Blob(partes, { type: rec.mimeType || "audio/webm" }));
+            };
+            rec.onerror = function (e) { if (alError) alError(e.error || e); };
+            rec.start();
+            var tope = setTimeout(function () { if (rec.state !== "inactive") rec.stop(); }, MAX_SEG * 1000);
+            return {
+              detener: function () { if (rec.state !== "inactive") rec.stop(); },
+              cancelar: function () { cancelado = true; if (rec.state !== "inactive") rec.stop(); }
+            };
+          });
+      }
+
+      function aWavB64(blob) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+        var ctx = new AC();
+        return blob.arrayBuffer().then(function (ab) {
+          return new Promise(function (ok, mal) { ctx.decodeAudioData(ab, ok, mal); });
+        }).then(function (audio) {
+          try { ctx.close(); } catch (_) {}
+          var largo = Math.max(1, Math.ceil(audio.duration * 16000));
+          var off = new OAC(1, largo, 16000);
+          var src = off.createBufferSource();
+          src.buffer = audio; src.connect(off.destination); src.start(0);
+          return off.startRendering();
+        }).then(function (r) {
+          var pcm = r.getChannelData(0), n = pcm.length;
+          var buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+          function txt(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+          txt(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); txt(8, "WAVE"); txt(12, "fmt ");
+          v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+          v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+          txt(36, "data"); v.setUint32(40, n * 2, true);
+          for (var i = 0; i < n; i++) { var x = Math.max(-1, Math.min(1, pcm[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+          var bytes = new Uint8Array(buf), s = "", PASO = 0x8000;
+          for (var j = 0; j < bytes.length; j += PASO) s += String.fromCharCode.apply(null, bytes.subarray(j, j + PASO));
+          return { b64: btoa(s), segundos: n / 16000 };
+        });
+      }
+
+      function enviar(datos) {
+        var u = cerebro();
+        if (!u) return Promise.reject(new Error("Falta la dirección del cerebro."));
+        var user = window.firebase && firebase.auth && firebase.auth().currentUser;
+        if (!user) return Promise.reject(new Error("Para hablarle a Jarvis tiene que estar conectada la nube ☁️."));
+        var zona = "";
+        try { zona = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
+        return user.getIdToken().then(function (t) {
+          return fetch(u + "/voz", {
+            method: "POST",
+            headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" },
+            body: JSON.stringify(Object.assign({ zona: zona }, datos))
+          });
+        }).then(function (r) {
+          return r.json().catch(function () { return { error: "El cerebro respondió " + r.status }; }).then(function (j) {
+            if (!r.ok) throw new Error(j.error || ("El cerebro respondió " + r.status));
+            return j;
+          });
+        });
+      }
+
+      function muda() { try { return localStorage.getItem(MUDA) === "1"; } catch (_) { return false; } }
+      function setMuda(b) { try { localStorage.setItem(MUDA, b ? "1" : "0"); } catch (_) {} if (b) callar(); }
+      function callar() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (_) {} }
+      function hablar(texto) {
+        if (muda() || !texto || !window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+        try {
+          speechSynthesis.cancel();
+          var u = new SpeechSynthesisUtterance(texto);
+          var voces = speechSynthesis.getVoices() || [];
+          var pref = ["es-AR", "es-US", "es-419", "es-MX", "es-ES"];
+          var voz = null;
+          for (var i = 0; i < pref.length && !voz; i++) voz = voces.find(function (v) { return v.lang === pref[i] || v.lang.replace("_", "-") === pref[i]; }) || null;
+          if (!voz) voz = voces.find(function (v) { return /^es/i.test(v.lang); }) || null;
+          if (voz) u.voice = voz;
+          u.lang = voz ? voz.lang : "es-AR";
+          u.rate = 1.03;
+          speechSynthesis.speak(u);
+        } catch (_) {}
+      }
+
+      // ── Bandeja ───────────────────────────────────────────────────────
+      function col() {
+        var S = window.JarvisSync, ref = S && S.docRef && S.docRef();
+        return ref ? ref.collection("bandeja") : null;
+      }
+      function escuchar(cb) {
+        var corte = null, vivo = true, intentos = 0;
+        (function probar() {
+          if (!vivo) return;
+          var c = col();
+          if (!c) { if (intentos++ < 40) setTimeout(probar, 3000); return; }
+          corte = c.where("estado", "==", "pendiente").onSnapshot(function (snap) {
+            var lista = [];
+            snap.forEach(function (d) { lista.push(Object.assign({ id: d.id }, d.data())); });
+            lista.sort(function (a, b) { return (b.creado || 0) - (a.creado || 0); });
+            cb(lista, null);
+          }, function (e) { cb([], e); });
+        })();
+        return function () { vivo = false; if (corte) corte(); };
+      }
+      function resolver(id, estado) {
+        var c = col();
+        if (!c || /^local-/.test(id)) return Promise.resolve();
+        return c.doc(id).set({ estado: estado, resuelto: Date.now() }, { merge: true });
+      }
+
+      window.JarvisVoz = {
+        puedeGrabar: puedeGrabar, grabar: grabar, aWavB64: aWavB64, enviar: enviar,
+        hablar: hablar, callar: callar, muda: muda, setMuda: setMuda,
+        escuchar: escuchar, resolver: resolver, MAX_SEG: MAX_SEG
+      };
+    })();
+  </script>
+
   <script>
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const Calendar = LucideIcon("Calendar");
@@ -1953,6 +2094,10 @@ const Layers = LucideIcon("Layers");
 const CircleHelp = LucideIcon("HelpCircle");
 const ArrowLeft = LucideIcon("ArrowLeft");
 const ArrowRight = LucideIcon("ArrowRight");
+const Mic = LucideIcon("Mic");
+const Send = LucideIcon("Send");
+const Volume2 = LucideIcon("Volume2");
+const VolumeX = LucideIcon("VolumeX");
 const RUTINA_LABORAL_DEFAULT = [
   // ── MERCADO DE CAPITALES — 3 horas ──
   {
@@ -5529,6 +5674,201 @@ function armarICSDeMarcas(marcas, anticipacion) {
   });
   L.push("END:VCALENDAR");
   return { texto: L.join("\r\n"), cuantos };
+}
+function JarvisVozBoton({ agregarEvento, taxonomia, esMobile }) {
+  const V = window.JarvisVoz;
+  const [fase, setFase] = useState("listo");
+  const [abierto, setAbierto] = useState(false);
+  const [pendientes, setPendientes] = useState([]);
+  const [locales, setLocales] = useState([]);
+  const [respuesta, setRespuesta] = useState("");
+  const [dicho, setDicho] = useState("");
+  const [error, setError] = useState("");
+  const [escrito, setEscrito] = useState("");
+  const [editando, setEditando] = useState(null);
+  const [muda, setMudaSt] = useState(V ? V.muda() : false);
+  const [seg, setSeg] = useState(0);
+  const ctrl = useRef(null);
+  useEffect(() => {
+    if (!V) return;
+    return V.escuchar((l) => setPendientes(l));
+  }, []);
+  useEffect(() => {
+    if (fase !== "grabando") return;
+    setSeg(0);
+    const t = setInterval(() => setSeg((s) => s + 1), 1e3);
+    return () => clearInterval(t);
+  }, [fase]);
+  if (!V) return null;
+  const areasV = areasDeTaxonomia(taxonomia);
+  const areaDef = (areasV.find((a) => /personal/i.test(a.key)) || areasV[0] || {}).key || "Personal";
+  const todos = [...locales, ...pendientes];
+  const recibir = (j) => {
+    setDicho(j.texto || "");
+    setRespuesta(j.respuesta || "");
+    V.hablar(j.respuesta || "");
+    if (j.propuesta && j.propuesta.tipo === "evento" && !j.guardado) {
+      setLocales((l) => [{ id: "local-" + Date.now(), texto: j.texto, propuesta: j.propuesta, creado: Date.now() }, ...l]);
+    }
+    setAbierto(true);
+  };
+  const fallar = (e) => {
+    const m = e && e.message || String(e);
+    setError(/Permission|NotAllowed|denied/i.test(m) ? "El micr\xF3fono est\xE1 bloqueado para Jarvis. Se habilita en los permisos de la app." : m);
+    setFase("listo");
+    setAbierto(true);
+  };
+  const tocarMic = () => {
+    setError("");
+    if (fase === "grabando") {
+      if (ctrl.current) ctrl.current.detener();
+      return;
+    }
+    if (fase === "pensando") return;
+    if (!V.puedeGrabar()) {
+      setAbierto(true);
+      setError("Este navegador no deja grabar. Puede escribirle a Jarvis ac\xE1 abajo.");
+      return;
+    }
+    V.callar();
+    V.grabar((blob) => {
+      setFase("pensando");
+      V.aWavB64(blob).then((w) => {
+        if (w.segundos < 0.6) throw new Error("Fue muy corto, Se\xF1or. Mantenga el bot\xF3n un poco m\xE1s.");
+        return V.enviar({ audio: w.b64 });
+      }).then((j) => {
+        setFase("listo");
+        recibir(j);
+      }).catch(fallar);
+    }, fallar).then((c) => {
+      ctrl.current = c;
+      setFase("grabando");
+    }).catch(fallar);
+  };
+  const mandarEscrito = () => {
+    const t = escrito.trim();
+    if (!t) return;
+    setError("");
+    setFase("pensando");
+    V.enviar({ texto: t }).then((j) => {
+      setEscrito("");
+      setFase("listo");
+      recibir(j);
+    }).catch(fallar);
+  };
+  const quitar = (item, estado) => {
+    if (String(item.id).startsWith("local-")) setLocales((l) => l.filter((x) => x.id !== item.id));
+    else {
+      setPendientes((l) => l.filter((x) => x.id !== item.id));
+      V.resolver(item.id, estado);
+    }
+  };
+  const confirmar = (item) => {
+    const p = item.propuesta || {};
+    agregarEvento({
+      categoria: areaDef,
+      seccion: "",
+      subseccion: "",
+      titulo: p.titulo,
+      tarea: p.titulo,
+      descripcion: item.texto ? `Dictado a Jarvis: \xAB${item.texto}\xBB` : "",
+      fecha: p.fecha,
+      hora: p.hora || null,
+      duracion: p.hora ? 30 : null,
+      _aviso: { avisar: !!p.hora, ant: null }
+    });
+    quitar(item, "confirmado");
+    V.hablar("Hecho, Se\xF1or.");
+  };
+  const cuando = (p) => {
+    if (!p || !p.fecha) return "";
+    const hoy = fechaISOde(/* @__PURE__ */ new Date());
+    const man = fechaISOde(new Date(Date.now() + 864e5));
+    const d = fechaDeISO(p.fecha);
+    const dia = p.fecha === hoy ? "Hoy" : p.fecha === man ? "Ma\xF1ana" : d.toLocaleDateString("es-AR", { weekday: "short", day: "numeric", month: "numeric" });
+    return dia + (p.hora ? ` \xB7 ${p.hora}` : p.sinFecha ? " \xB7 sin horario" : "");
+  };
+  const abajo = esMobile ? "calc(84px + env(safe-area-inset-bottom))" : "24px";
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, abierto && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40", onClick: () => setAbierto(false) }, /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      className: "w-full sm:max-w-md max-h-[85vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-[#F4EFE4] dark:bg-[#17140D] border border-amber-300/60 dark:border-amber-900/60 p-4 space-y-3 shadow-2xl",
+      style: { paddingBottom: "calc(16px + env(safe-area-inset-bottom))" },
+      onClick: (e) => e.stopPropagation()
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "w-8 h-8 rounded-full bg-[#C9A227] text-neutral-950 flex items-center justify-center" }, /* @__PURE__ */ React.createElement(Mic, { size: 16 })), /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-xl font-extrabold flex-1" }, "Jarvis"), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => {
+          V.setMuda(!muda);
+          setMudaSt(!muda);
+        },
+        title: muda ? "Activar la voz" : "Silenciar la voz",
+        className: "p-1.5 rounded-md text-neutral-500 hover:text-amber-600"
+      },
+      muda ? /* @__PURE__ */ React.createElement(VolumeX, { size: 18 }) : /* @__PURE__ */ React.createElement(Volume2, { size: 18 })
+    ), /* @__PURE__ */ React.createElement("button", { onClick: () => setAbierto(false), className: "p-1.5 rounded-md text-neutral-500 hover:text-amber-600", "aria-label": "Cerrar" }, /* @__PURE__ */ React.createElement(X, { size: 18 }))),
+    fase === "pensando" && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-neutral-500" }, "Escuchando lo que dijo\u2026"),
+    dicho && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500" }, "Usted dijo: ", /* @__PURE__ */ React.createElement("i", null, "\xAB", dicho, "\xBB")),
+    respuesta && /* @__PURE__ */ React.createElement("p", { className: "text-sm font-medium bg-amber-100/70 dark:bg-amber-950/40 rounded-2xl rounded-tl-sm px-3 py-2" }, respuesta),
+    error && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-red-500 leading-snug" }, error),
+    todos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-400 font-bold" }, "Bandeja de Jarvis \xB7 para confirmar"), todos.map((it) => {
+      const p = it.propuesta || {};
+      if (editando === it.id) {
+        return /* @__PURE__ */ React.createElement(
+          EventoForm,
+          {
+            key: it.id,
+            inicial: { titulo: p.titulo, fecha: p.fecha, hora: p.hora || "", categoria: areaDef, duracion: 30 },
+            fechaSugerida: p.fecha,
+            taxonomia,
+            onGuardar: (datos) => {
+              agregarEvento(datos);
+              quitar(it, "confirmado");
+              setEditando(null);
+              V.hablar("Hecho, Se\xF1or.");
+            },
+            onEliminar: null,
+            onCancelar: () => setEditando(null)
+          }
+        );
+      }
+      return /* @__PURE__ */ React.createElement("div", { key: it.id, className: "rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-3" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-sm" }, p.titulo), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-amber-700 dark:text-amber-400 mt-0.5" }, cuando(p), p.hora ? " \xB7 con aviso \u{1F514}" : ""), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => confirmar(it), className: "px-3 py-1.5 rounded-md text-xs font-bold bg-[#C9A227] text-neutral-950 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(Check, { size: 13 }), " Confirmar"), /* @__PURE__ */ React.createElement("button", { onClick: () => setEditando(it.id), className: "px-3 py-1.5 rounded-md text-xs border border-neutral-300 dark:border-neutral-700 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(Pencil, { size: 12 }), " Editar"), /* @__PURE__ */ React.createElement("button", { onClick: () => quitar(it, "descartado"), className: "px-3 py-1.5 rounded-md text-xs text-neutral-500 hover:text-red-500" }, "Descartar")));
+    })),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 pt-1" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: escrito,
+        onChange: (e) => setEscrito(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter") mandarEscrito();
+        },
+        placeholder: "O escr\xEDbale: \xABma\xF1ana a las 15 llamar a P\xE9rez\xBB",
+        className: "flex-1 min-w-0 px-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
+      }
+    ), /* @__PURE__ */ React.createElement("button", { onClick: mandarEscrito, disabled: fase === "pensando" || !escrito.trim(), className: "p-2 rounded-xl bg-neutral-900 text-white dark:bg-amber-500 dark:text-neutral-950 disabled:opacity-40", "aria-label": "Enviar" }, /* @__PURE__ */ React.createElement(Send, { size: 16 })))
+  )), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: tocarMic,
+      "aria-label": fase === "grabando" ? "Terminar y mandar" : "Hablarle a Jarvis",
+      title: fase === "grabando" ? "Toc\xE1 para terminar" : "Hablarle a Jarvis",
+      className: "fixed right-4 z-[55] w-14 h-14 rounded-full shadow-xl flex items-center justify-center transition " + (fase === "grabando" ? "bg-red-600 text-white animate-pulse" : "bg-[#C9A227] text-neutral-950 hover:scale-105"),
+      style: { bottom: abajo }
+    },
+    fase === "pensando" ? /* @__PURE__ */ React.createElement(RefreshCw, { size: 22, className: "animate-spin" }) : fase === "grabando" ? /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold tabular-nums" }, seg, "s") : /* @__PURE__ */ React.createElement(Mic, { size: 24 }),
+    todos.length > 0 && fase === "listo" && /* @__PURE__ */ React.createElement(
+      "span",
+      {
+        onClick: (e) => {
+          e.stopPropagation();
+          setAbierto(true);
+        },
+        className: "absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-laca-600 text-white text-[11px] font-bold flex items-center justify-center"
+      },
+      todos.length
+    )
+  ));
 }
 function PanelAvisosAppCerrada() {
   const P = window.JarvisPush;
@@ -11975,7 +12315,7 @@ function App() {
       /* @__PURE__ */ React.createElement(Menu, { size: 20, strokeWidth: 1.75 }),
       "M\xE1s"
     )
-  ), tourPaso !== null && /* @__PURE__ */ React.createElement(TourGuiado, { paso: tourPaso, setPaso: setTourPaso, onCerrar: cerrarTour }));
+  ), /* @__PURE__ */ React.createElement(JarvisVozBoton, { agregarEvento, taxonomia, esMobile }), tourPaso !== null && /* @__PURE__ */ React.createElement(TourGuiado, { paso: tourPaso, setPaso: setTourPaso, onCerrar: cerrarTour }));
 }
 (function() {
   function render() {
