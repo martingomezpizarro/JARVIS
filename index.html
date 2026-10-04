@@ -5725,7 +5725,7 @@ function jvPuntaje(q, titulo) {
   });
   return n / qt.length;
 }
-function jvMejor(q, items, tituloDe) {
+function jvMejor(q, items, tituloDe, umbral) {
   let best = null, bs = 0;
   items.forEach((it) => {
     const p = jvPuntaje(q, tituloDe(it));
@@ -5734,7 +5734,7 @@ function jvMejor(q, items, tituloDe) {
       best = it;
     }
   });
-  return bs >= 0.5 ? best : null;
+  return bs >= (umbral || 0.5) ? best : null;
 }
 function jvLista(items, max) {
   const n = max || 6;
@@ -5796,6 +5796,87 @@ function jarvisLocal(texto, ctx) {
       propuesta: { tipo: "objetivo-nuevo", titulo: t, area: area || "", dia, hora }
     };
   }
+  const esBorrar = /^\s*(jarvis\s+)?(borr|elimin|saca|saque|quita|cancel)\w*\b/.test(s);
+  const esCambiar = /^\s*(jarvis\s+)?(cambi|move|mova|pasa|renombr|reprogram|posterg|edit|corre)\w*\b/.test(s) || /\scomo (urgente|semanal)\s/.test(s) && /^\s*(jarvis\s+)?pon/.test(s);
+  if (esBorrar || esCambiar) {
+    const cands = [];
+    objs.forEach((o) => cands.push({ k: String(o.id).startsWith("rec-") ? "rec" : "obj", o, t: titObj(o), nombre: itemTitulo(o) }));
+    (ctx.eventos || []).filter((e) => !e.hecho).forEach((e) => cands.push({ k: "evt", e, t: e.titulo || e.tarea || "", nombre: e.titulo || e.tarea || "" }));
+    lpObjs.forEach((x) => cands.push({ k: "lp", x, t: x.titulo, nombre: x.titulo }));
+    const lista = esLP ? cands.filter((c2) => c2.k === "lp") : cands.filter((c2) => c2.k !== "lp");
+    let q = jvNorm(texto).replace(/^(jarvis\s+)?\w+\s*/, "");
+    const cambios = {};
+    let nuevoNombre = null;
+    const renombra = /^\s*(jarvis\s+)?renombr/.test(s) || /\scambia\w*\s+(el\s+)?nombre/.test(s);
+    if (renombra) {
+      const mo = String(texto).match(/^.*\s(?:por|a|como)\s+(.+?)\s*[.!]?$/i);
+      if (mo) nuevoNombre = jvLimpiarTitulo(mo[1]);
+      q = q.replace(/^(el\s+)?nombre\s+(de|del)\s+/, "");
+      const corte = Math.max(q.lastIndexOf(" por "), q.lastIndexOf(" como "), q.lastIndexOf(" a "));
+      if (corte > 0) q = q.slice(0, corte);
+    } else if (!esBorrar) {
+      const md = q.match(/\b(?:para\s+|al\s+|a\s+|el\s+|hasta\s+)*(?:el\s+)?(pasado manana|domingo|lunes|martes|miercoles|jueves|viernes|sabado|hoy|manana)\b/);
+      if (md) {
+        cambios._dia = md[1];
+        q = q.replace(md[0], " ");
+      }
+      const mh = q.match(/\b(?:para\s+|a\s+)?(?:las?\s+)(\d{1,2})(?:\s(\d{2}))?(\s+y media)?(?:\s*hs)?(\s+de la (manana|tarde|noche))?\b/);
+      if (mh) {
+        let hh = +mh[1];
+        const mi = mh[3] ? 30 : mh[2] ? +mh[2] : 0;
+        if (mh[5] === "tarde" || mh[5] === "noche") {
+          if (hh < 12) hh += 12;
+        } else if (!mh[5] && hh >= 1 && hh <= 7) hh += 12;
+        cambios.hora = ("0" + hh).slice(-2) + ":" + ("0" + mi).slice(-2);
+        q = q.replace(mh[0], " ");
+      }
+      const mp = q.match(/\bcomo (urgente|semanal)\b/);
+      if (mp) {
+        cambios.prioridad = mp[1];
+        q = q.replace(mp[0], " ");
+      }
+      q = q.replace(/\b(la hora de|el horario de|el dia de|de dia)\b/g, " ");
+    }
+    q = q.replace(/\b(el objetivo|la tarea|el evento|del largo plazo|de i have a dream|de mis objetivos|de la semana)\b/g, " ").replace(/\s+/g, " ").trim().replace(/^(el|la|los|las|lo|al|a|de|del|para)\s+/, "").replace(/\s+(para|al|a|el|la|de|del|las?)$/, "");
+    const c = jvMejor(q, lista, (x) => x.t, esBorrar ? 0.75 : 0.5);
+    if (!c) return { sinCoincidencia: /^\s*(jarvis\s+)?(pasa|corre)/.test(s), respuesta: `No encontr\xE9 \xAB${q}\xBB entre sus objetivos ni sus eventos, Se\xF1or.` };
+    if (c.k === "rec") return { respuesta: `\xAB${c.nombre}\xBB es recurrente, Se\xF1or: se cambia o se borra en Organizar \u203A Recurrentes.` };
+    if (esBorrar) {
+      const donde = c.k === "evt" ? "el evento" : c.k === "lp" ? "de I have a dream el objetivo" : "el objetivo";
+      return { respuesta: `\xBFBorro ${donde} \xAB${c.nombre}\xBB, Se\xF1or?`, propuesta: { tipo: "borrar", destino: c.k, id: String(c.k === "obj" ? c.o.id : c.k === "evt" ? c.e.id : c.x.id), titulo: c.nombre } };
+    }
+    const out = {};
+    const nombresDia = { domingo: 0, lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6 };
+    if (cambios._dia) {
+      const hoy = /* @__PURE__ */ new Date();
+      let f = new Date(hoy);
+      if (cambios._dia === "manana") f.setDate(hoy.getDate() + 1);
+      else if (cambios._dia === "pasado manana") f.setDate(hoy.getDate() + 2);
+      else if (cambios._dia !== "hoy") {
+        let d = (nombresDia[cambios._dia] - hoy.getDay() + 7) % 7;
+        if (d === 0) d = 7;
+        f.setDate(hoy.getDate() + d);
+      }
+      if (c.k === "evt") out.fecha = fechaISOde(f);
+      else out.dia = DIAS[f.getDay()].key;
+    }
+    if (cambios.hora) out.hora = cambios.hora;
+    if (cambios.prioridad && c.k === "obj") out.prioridad = cambios.prioridad;
+    if (nuevoNombre) {
+      if (c.k === "obj") out.tarea = nuevoNombre;
+      else out.titulo = nuevoNombre;
+    }
+    if (!Object.keys(out).length) return { respuesta: `\xBFQu\xE9 le cambio a \xAB${c.nombre}\xBB, Se\xF1or? D\xEDgame el d\xEDa, la hora o el nombre nuevo.` };
+    if (c.k === "lp" && !out.titulo) return { respuesta: `De I have a dream, por ahora puedo cambiarle el nombre o borrarlo. El resto se edita en la pesta\xF1a.` };
+    const partes = [];
+    if (out.titulo || out.tarea) partes.push("se llama \xAB" + (out.titulo || out.tarea) + "\xBB");
+    if (out.dia) partes.push("pasa al " + DIAS.find((d) => d.key === out.dia).full.toLowerCase());
+    if (out.fecha) partes.push("pasa al " + fechaDeISO(out.fecha).toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "numeric" }));
+    if (out.hora) partes.push("a las " + out.hora);
+    if (out.prioridad) partes.push("queda como " + out.prioridad);
+    const resumen = partes.join(", ");
+    return { respuesta: `\xAB${c.nombre}\xBB ${resumen}. \xBFLo confirmo, Se\xF1or?`, propuesta: { tipo: "cambio", destino: c.k, id: String(c.k === "obj" ? c.o.id : c.k === "evt" ? c.e.id : c.x.id), titulo: c.nombre, cambios: out, resumen } };
+  }
   if (/^\s*(jarvis\s+)?(ya \w+|termine|complete|cumpli|tacha(me|lo)?|marca(me|lo|r)?)\b/.test(s)) {
     const q = jvNorm(texto).replace(/^(jarvis\s+)?(ya \w+|termine|complete|cumpli|tacha(me|lo)?|marca(me|lo|r)?)\s*(como\s+)?(hech[oa]s?|cumplid[oa]s?)?\s*(el\s+objetivo|la\s+tarea|el\s+hito)?\s*/, "");
     const hitos = [];
@@ -5838,7 +5919,7 @@ function jarvisLocal(texto, ctx) {
 function IconoPanda({ size = 32 }) {
   return /* @__PURE__ */ React.createElement("svg", { width: size, height: size, viewBox: "0 0 64 64", "aria-hidden": "true" }, /* @__PURE__ */ React.createElement("circle", { cx: "15", cy: "16", r: "9", fill: "#1a1712" }), /* @__PURE__ */ React.createElement("circle", { cx: "49", cy: "16", r: "9", fill: "#1a1712" }), /* @__PURE__ */ React.createElement("circle", { cx: "32", cy: "35", r: "23", fill: "#FBF7EE", stroke: "#C9A227", strokeWidth: "2.5" }), /* @__PURE__ */ React.createElement("ellipse", { cx: "22.5", cy: "33", rx: "6.2", ry: "8", transform: "rotate(-28 22.5 33)", fill: "#1a1712" }), /* @__PURE__ */ React.createElement("ellipse", { cx: "41.5", cy: "33", rx: "6.2", ry: "8", transform: "rotate(28 41.5 33)", fill: "#1a1712" }), /* @__PURE__ */ React.createElement("circle", { cx: "23.5", cy: "32", r: "2.6", fill: "#FBF7EE" }), /* @__PURE__ */ React.createElement("circle", { cx: "40.5", cy: "32", r: "2.6", fill: "#FBF7EE" }), /* @__PURE__ */ React.createElement("circle", { cx: "24.2", cy: "31.4", r: "1.1", fill: "#1a1712" }), /* @__PURE__ */ React.createElement("circle", { cx: "41.2", cy: "31.4", r: "1.1", fill: "#1a1712" }), /* @__PURE__ */ React.createElement("ellipse", { cx: "32", cy: "42", rx: "4", ry: "2.8", fill: "#1a1712" }), /* @__PURE__ */ React.createElement("path", { d: "M27.5 47 Q32 50.5 36.5 47", stroke: "#1a1712", strokeWidth: "1.8", fill: "none", strokeLinecap: "round" }), /* @__PURE__ */ React.createElement("circle", { cx: "17", cy: "44", r: "2.6", fill: "#EBCB6E", opacity: ".55" }), /* @__PURE__ */ React.createElement("circle", { cx: "47", cy: "44", r: "2.6", fill: "#EBCB6E", opacity: ".55" }));
 }
-function JarvisVozBoton({ agregarEvento, taxonomia, esMobile, objetivos, lpModel, acciones }) {
+function JarvisVozBoton({ agregarEvento, taxonomia, esMobile, objetivos, lpModel, eventos, acciones }) {
   const V = window.JarvisVoz;
   const [fase, setFase] = useState("listo");
   const [abierto, setAbierto] = useState(false);
@@ -5894,8 +5975,15 @@ function JarvisVozBoton({ agregarEvento, taxonomia, esMobile, objetivos, lpModel
   const decir = (de, texto) => texto && setCharla((c) => [...c.slice(-30), { de, texto }]);
   const recibir = (j) => {
     if (j.propuesta && j.propuesta.tipo === "app") {
-      const r = jarvisLocal(j.texto || "", { objetivos, lpModel, taxonomia });
+      const r = jarvisLocal(j.texto || "", { objetivos, lpModel, taxonomia, eventos });
       if (j.texto) decir("yo", j.texto);
+      const alt = j.propuesta.alternativa;
+      if (r.sinCoincidencia && alt && alt.tipo === "evento") {
+        decir("jarvis", alt.respuesta);
+        V.hablar(alt.respuesta);
+        setLocales((l) => [{ id: "local-" + Date.now(), texto: j.texto, propuesta: { tipo: "evento", titulo: alt.titulo, fecha: alt.fecha, hora: alt.hora, aviso: alt.aviso, sinFecha: alt.sinFecha }, creado: Date.now() }, ...l]);
+        return;
+      }
       if (r.respuesta) {
         decir("jarvis", r.respuesta);
         V.hablar(r.respuesta);
@@ -5973,6 +6061,29 @@ function JarvisVozBoton({ agregarEvento, taxonomia, esMobile, objetivos, lpModel
       decir("jarvis", txt);
       V.hablar("Hecho, Se\xF1or.");
     };
+    if (p.tipo === "borrar") {
+      if (p.destino === "obj") {
+        const o = (objetivos || []).find((x) => String(x.id) === p.id);
+        if (o && A.borrarObjetivoJarvis) A.borrarObjetivoJarvis(o);
+      } else if (p.destino === "evt") {
+        if (A.eliminarEvento) A.eliminarEvento(p.id);
+      } else if (p.destino === "lp") {
+        if (A.borrarObjetivoLP) A.borrarObjetivoLP(p.id);
+      }
+      return listo(`Listo, Se\xF1or. Borr\xE9 \xAB${p.titulo}\xBB.`);
+    }
+    if (p.tipo === "cambio") {
+      if (p.destino === "obj") {
+        const o = (objetivos || []).find((x) => String(x.id) === p.id);
+        if (o && A.editarObjetivoJarvis) A.editarObjetivoJarvis(o, p.cambios);
+      } else if (p.destino === "evt") {
+        const e = (eventos || []).find((x) => String(x.id) === p.id);
+        if (e && A.editarEventoJarvis) A.editarEventoJarvis(e, p.cambios);
+      } else if (p.destino === "lp") {
+        if (A.renombrarObjetivoLP && p.cambios.titulo) A.renombrarObjetivoLP(p.id, p.cambios.titulo);
+      }
+      return listo(`Hecho, Se\xF1or. \xAB${p.titulo}\xBB ${p.resumen}.`);
+    }
     if (p.tipo === "objetivo-hecho") {
       const o = (objetivos || []).find((x) => String(x.id) === String(p.id));
       if (o && A.marcarObjetivoHecho) A.marcarObjetivoHecho(o);
@@ -6119,7 +6230,7 @@ function JarvisVozBoton({ agregarEvento, taxonomia, esMobile, objetivos, lpModel
         }
       }
     ), /* @__PURE__ */ React.createElement("span", { className: "w-12 text-right text-neutral-500" }, tonoSt.rate < 0.9 ? "pausado" : tonoSt.rate > 1.1 ? "r\xE1pido" : "normal")), /* @__PURE__ */ React.createElement("button", { onClick: () => V.hablar("Buenas noches, Se\xF1or. Todos los sistemas funcionan con normalidad.", true), className: "px-3 py-1 rounded-md bg-[#C9A227] text-neutral-950 font-bold" }, "Probar la voz"), !voces.length && /* @__PURE__ */ React.createElement("p", { className: "text-neutral-500" }, "Este aparato no informa voces en espa\xF1ol. En Android se agregan en Ajustes \u203A Accesibilidad \u203A Texto a voz.")),
-    /* @__PURE__ */ React.createElement("div", { className: "flex-1 overflow-y-auto px-4 space-y-2 pb-2" }, charla.length === 0 && todos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 pt-2 space-y-1" }, /* @__PURE__ */ React.createElement("p", null, "T\xF3queme el micr\xF3fono y d\xEDgame qu\xE9 necesita, o escr\xEDbalo abajo. Por ejemplo:"), /* @__PURE__ */ React.createElement("p", { className: "italic" }, "\xABMa\xF1ana a las 3 llamar a P\xE9rez\xBB \xB7 \xAB\xBFQu\xE9 tengo hoy?\xBB \xB7 \xAB\xBFQu\xE9 objetivos me quedan?\xBB \xB7 \xABYa termin\xE9 la tesis\xBB \xB7 \xAB\xBFC\xF3mo voy con I have a dream?\xBB \xB7 \xABAgreg\xE1 a I have a dream aprender alem\xE1n\xBB")), charla.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex " + (m.de === "yo" ? "justify-end" : "justify-start") }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[85%] px-3 py-2 text-sm rounded-2xl " + (m.de === "yo" ? "bg-neutral-900 text-white dark:bg-neutral-800 rounded-br-sm" : "bg-amber-100/80 dark:bg-amber-950/50 rounded-bl-sm font-medium") }, m.texto))), todos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2 pt-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-400 font-bold" }, "Bandeja \xB7 para confirmar"), todos.map((it) => {
+    /* @__PURE__ */ React.createElement("div", { className: "flex-1 overflow-y-auto px-4 space-y-2 pb-2" }, charla.length === 0 && todos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 pt-2 space-y-1" }, /* @__PURE__ */ React.createElement("p", null, "T\xF3queme el micr\xF3fono y d\xEDgame qu\xE9 necesita, o escr\xEDbalo abajo. Por ejemplo:"), /* @__PURE__ */ React.createElement("p", { className: "italic" }, "\xABMa\xF1ana a las 3 llamar a P\xE9rez\xBB \xB7 \xAB\xBFQu\xE9 tengo hoy?\xBB \xB7 \xAB\xBFQu\xE9 objetivos me quedan?\xBB \xB7 \xABYa termin\xE9 la tesis\xBB \xB7 \xAB\xBFC\xF3mo voy con I have a dream?\xBB \xB7 \xABAgreg\xE1 a I have a dream aprender alem\xE1n\xBB \xB7 \xABPas\xE1 gimnasio al jueves a las 19\xBB \xB7 \xABBorr\xE1 el objetivo X\xBB")), charla.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex " + (m.de === "yo" ? "justify-end" : "justify-start") }, /* @__PURE__ */ React.createElement("div", { className: "max-w-[85%] px-3 py-2 text-sm rounded-2xl " + (m.de === "yo" ? "bg-neutral-900 text-white dark:bg-neutral-800 rounded-br-sm" : "bg-amber-100/80 dark:bg-amber-950/50 rounded-bl-sm font-medium") }, m.texto))), todos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2 pt-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-400 font-bold" }, "Bandeja \xB7 para confirmar"), todos.map((it) => {
       const p = it.propuesta || {};
       if (editando === it.id) {
         return /* @__PURE__ */ React.createElement(
@@ -6142,9 +6253,9 @@ function JarvisVozBoton({ agregarEvento, taxonomia, esMobile, objetivos, lpModel
         );
       }
       const esNuevo = p.tipo === "objetivo-nuevo" || p.tipo === "lp-nuevo";
-      const etiqueta = p.tipo === "objetivo-hecho" ? "Marcar como hecho" : p.tipo === "hito-hecho" ? "Hito cumplido \xB7 " + (p.de || "") : p.tipo === "objetivo-nuevo" ? "Nuevo objetivo semanal" + (p.dia ? " \xB7 " + (DIAS.find((d) => d.key === p.dia) || {}).full : "") + (p.hora ? " " + p.hora : "") : p.tipo === "lp-nuevo" ? "Nuevo objetivo \xB7 I have a dream" : null;
+      const etiqueta = p.tipo === "borrar" ? "Borrar" + (p.destino === "evt" ? " evento" : p.destino === "lp" ? " \xB7 I have a dream" : " objetivo") : p.tipo === "cambio" ? "Cambiar \xB7 " + (p.resumen || "") : p.tipo === "objetivo-hecho" ? "Marcar como hecho" : p.tipo === "hito-hecho" ? "Hito cumplido \xB7 " + (p.de || "") : p.tipo === "objetivo-nuevo" ? "Nuevo objetivo semanal" + (p.dia ? " \xB7 " + (DIAS.find((d) => d.key === p.dia) || {}).full : "") + (p.hora ? " " + p.hora : "") : p.tipo === "lp-nuevo" ? "Nuevo objetivo \xB7 I have a dream" : null;
       const selCls = "mt-1.5 w-full px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent text-xs";
-      return /* @__PURE__ */ React.createElement("div", { key: it.id, className: "rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-3" }, etiqueta && /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wide font-bold text-amber-700 dark:text-amber-400 mb-0.5" }, etiqueta), esNuevo ? /* @__PURE__ */ React.createElement("input", { value: p.titulo || "", onChange: (e) => ajustar(it, { titulo: e.target.value }), className: "w-full px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent text-sm font-semibold" }) : /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-sm" }, p.titulo), p.tipo === "lp-nuevo" && /* @__PURE__ */ React.createElement("select", { value: p.areaId || "", onChange: (e) => ajustar(it, { areaId: e.target.value }), className: selCls }, (lpModel && lpModel.areas || []).map((a) => /* @__PURE__ */ React.createElement("option", { key: a.id, value: a.id }, a.nombre))), p.tipo === "objetivo-nuevo" && /* @__PURE__ */ React.createElement("select", { value: p.area || areaDef, onChange: (e) => ajustar(it, { area: e.target.value }), className: selCls }, areasV.map((a) => /* @__PURE__ */ React.createElement("option", { key: a.key, value: a.key }, a.key))), (!p.tipo || p.tipo === "evento") && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-amber-700 dark:text-amber-400 mt-0.5" }, cuando(p), p.hora ? " \xB7 con aviso \u{1F514}" : ""), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => confirmar(it), className: "px-3 py-1.5 rounded-md text-xs font-bold bg-[#C9A227] text-neutral-950 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(Check, { size: 13 }), " Confirmar"), (!p.tipo || p.tipo === "evento") && /* @__PURE__ */ React.createElement("button", { onClick: () => setEditando(it.id), className: "px-3 py-1.5 rounded-md text-xs border border-neutral-300 dark:border-neutral-700 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(Pencil, { size: 12 }), " Editar"), /* @__PURE__ */ React.createElement("button", { onClick: () => quitar(it, "descartado"), className: "px-3 py-1.5 rounded-md text-xs text-neutral-500 hover:text-red-500" }, "Descartar")));
+      return /* @__PURE__ */ React.createElement("div", { key: it.id, className: "rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-3" }, etiqueta && /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wide font-bold text-amber-700 dark:text-amber-400 mb-0.5" }, etiqueta), esNuevo ? /* @__PURE__ */ React.createElement("input", { value: p.titulo || "", onChange: (e) => ajustar(it, { titulo: e.target.value }), className: "w-full px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent text-sm font-semibold" }) : /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-sm" }, p.titulo), p.tipo === "lp-nuevo" && /* @__PURE__ */ React.createElement("select", { value: p.areaId || "", onChange: (e) => ajustar(it, { areaId: e.target.value }), className: selCls }, (lpModel && lpModel.areas || []).map((a) => /* @__PURE__ */ React.createElement("option", { key: a.id, value: a.id }, a.nombre))), p.tipo === "objetivo-nuevo" && /* @__PURE__ */ React.createElement("select", { value: p.area || areaDef, onChange: (e) => ajustar(it, { area: e.target.value }), className: selCls }, areasV.map((a) => /* @__PURE__ */ React.createElement("option", { key: a.key, value: a.key }, a.key))), (!p.tipo || p.tipo === "evento") && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-amber-700 dark:text-amber-400 mt-0.5" }, cuando(p), p.hora ? " \xB7 con aviso \u{1F514}" : ""), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => confirmar(it), className: "px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1 " + (p.tipo === "borrar" ? "bg-red-600 text-white" : "bg-[#C9A227] text-neutral-950") }, p.tipo === "borrar" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(X, { size: 13 }), " Borrar") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Check, { size: 13 }), " Confirmar")), (!p.tipo || p.tipo === "evento") && /* @__PURE__ */ React.createElement("button", { onClick: () => setEditando(it.id), className: "px-3 py-1.5 rounded-md text-xs border border-neutral-300 dark:border-neutral-700 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(Pencil, { size: 12 }), " Editar"), /* @__PURE__ */ React.createElement("button", { onClick: () => quitar(it, "descartado"), className: "px-3 py-1.5 rounded-md text-xs text-neutral-500 hover:text-red-500" }, "Descartar")));
     })), error && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-red-500 leading-snug" }, error), /* @__PURE__ */ React.createElement("div", { ref: finChat })),
     /* @__PURE__ */ React.createElement(
       "div",
@@ -12290,6 +12401,34 @@ function App() {
       }]
     }));
   }
+  function editarObjetivoJarvis(o, cambios) {
+    if (!o || String(o.id).startsWith("rec-")) return;
+    const { dia, hora, ...resto } = cambios || {};
+    const nDia = dia !== void 0 ? dia : o.dia, nHora = hora !== void 0 ? hora : o.hora;
+    if (dia !== void 0 || hora !== void 0) asignarObjetivo(o.id, nDia, nHora, o.duracion);
+    if (Object.keys(resto).length) setObjetivosPersist((prev) => prev.map((x) => String(x.id) === String(o.id) ? { ...x, ...resto } : x));
+    const clave = `obj::${o.id}`;
+    if (window.JarvisNotif && window.JarvisNotif.esta(clave)) {
+      aplicarAviso(clave, { titulo: resto.tarea || itemTitulo(o), hora: nHora, dia: nDia, area: o.categoria, duracion: o.duracion }, { avisar: !!(nDia && nHora), ant: null });
+    }
+  }
+  function borrarObjetivoJarvis(o) {
+    if (!o || String(o.id).startsWith("rec-")) return;
+    setObjetivosPersist((prev) => prev.filter((x) => String(x.id) !== String(o.id)));
+    if (window.JarvisNotif) window.JarvisNotif.desmarcar(`obj::${o.id}`);
+  }
+  function editarEventoJarvis(ev, cambios) {
+    if (!ev) return;
+    const conAviso = window.JarvisNotif && window.JarvisNotif.esta(`evt::${ev.id}`);
+    const hora = cambios.hora !== void 0 ? cambios.hora : ev.hora;
+    editarEvento(ev.id, { ...cambios, ...cambios.titulo ? { tarea: cambios.titulo } : {}, _aviso: conAviso ? { avisar: !!hora, ant: null } : void 0 });
+  }
+  function renombrarObjetivoLP(id, titulo) {
+    aplicarLP((m) => ({ ...m, objetivos: (m.objetivos || []).map((o) => o.id === id ? { ...o, titulo } : o) }));
+  }
+  function borrarObjetivoLP(id) {
+    aplicarLP((m) => ({ ...m, objetivos: (m.objetivos || []).filter((o) => o.id !== id) }));
+  }
   const recurrentesSemana = useMemo(() => recurrentesComoObjetivos(recurrentes, now), [recurrentes, now]);
   const objetivosVista = useMemo(() => [...objetivos, ...recurrentesSemana], [objetivos, recurrentesSemana]);
   useEffect(() => {
@@ -12699,7 +12838,19 @@ function App() {
       esMobile,
       objetivos: objetivosVista,
       lpModel,
-      acciones: { marcarObjetivoHecho, agregarObjetivoSemanal, agregarObjetivoLP, marcarHitoLP }
+      eventos,
+      acciones: {
+        marcarObjetivoHecho,
+        agregarObjetivoSemanal,
+        agregarObjetivoLP,
+        marcarHitoLP,
+        editarObjetivoJarvis,
+        borrarObjetivoJarvis,
+        editarEventoJarvis,
+        eliminarEvento,
+        renombrarObjetivoLP,
+        borrarObjetivoLP
+      }
     }
   ), tourPaso !== null && /* @__PURE__ */ React.createElement(TourGuiado, { paso: tourPaso, setPaso: setTourPaso, onCerrar: cerrarTour }));
 }
