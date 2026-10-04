@@ -2,7 +2,7 @@
 // Estrategia: "la red primero, el cache como respaldo". Siempre intenta traer
 // la versión más nueva; si no hay señal, sirve la copia guardada. Así la app
 // abre sin internet y a la vez nunca queda congelada en una versión vieja.
-const CACHE = "jarvis-a2a284e492";
+const CACHE = "jarvis-2e199e6781";
 const ESENCIALES = [
   "./", "./index.html", "./manifest.json",
   "https://cdn.tailwindcss.com",
@@ -59,5 +59,36 @@ self.addEventListener("fetch", (e) => {
         if (req.mode === "navigate") return caches.match("./index.html");
         return Response.error();
       }))
+  );
+});
+
+// ── Avisos con la app cerrada (los manda el cerebro, Cloudflare) ──────────
+// El tag es el mismo que usa la app abierta: si el aviso llega por los dos
+// caminos, el sistema muestra uno solo (y no vuelve a sonar).
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; }
+  catch (_) { d = { titulo: "Jarvis", cuerpo: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.titulo || "Jarvis", {
+    body: d.cuerpo || "",
+    icon: "icono-192.png",
+    badge: "icono-192.png",
+    tag: d.tag || undefined,
+    renotify: false,
+    data: { url: d.url || "./index.html" }
+  }));
+});
+
+// Tocar el aviso: si la app ya está abierta, la trae al frente; si no, la abre.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const destino = new URL((e.notification.data && e.notification.data.url) || "./index.html", self.registration.scope).href;
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((ws) => {
+      for (const w of ws) {
+        if (w.url.indexOf(self.registration.scope) === 0 && "focus" in w) return w.focus();
+      }
+      return clients.openWindow(destino);
+    })
   );
 });
