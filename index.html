@@ -4658,9 +4658,9 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
   const pctSemana = kpiSemana.total ? Math.round(kpiSemana.cumplidos / kpiSemana.total * 100) : 0;
   const [nuevoEn, setNuevoEn] = useState(null);
   const claveRama = (c, se, su) => `${c}||${se}||${su}`;
-  const abrirNuevo = (c, se, su) => {
+  const abrirNuevo = (c, se, su, extra) => {
     const k = claveRama(c, se, su);
-    setNuevoEn((prev) => prev && claveRama(prev.categoria, prev.seccion, prev.subseccion) === k ? null : { categoria: c, seccion: se, subseccion: su });
+    setNuevoEn((prev) => prev && claveRama(prev.categoria, prev.seccion, prev.subseccion) === k && !extra ? null : { ...extra || {}, categoria: c, seccion: se, subseccion: su });
     setMostrarForm(false);
     setEditando(null);
   };
@@ -4682,7 +4682,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
     return /* @__PURE__ */ React.createElement("div", { className: "px-3.5 pb-3.5 pt-1" }, /* @__PURE__ */ React.createElement(
       ObjetivoForm,
       {
-        inicial: { categoria: c, seccion: se, subseccion: su },
+        inicial: { ...nuevoEn, categoria: c, seccion: se, subseccion: su },
         areas: areaList,
         taxonomia,
         lpObjetivos,
@@ -4893,7 +4893,11 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
     const PRIO = { urgente: ["Urgente", "bg-laca-600 text-white"], semanal: ["Semanal", "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300"], "no-olvides": ["No olvides", "bg-amber-500 text-neutral-950"] };
     const crearEn = (g) => {
       const txt = (nuevoSem[g.clave] || "").trim();
-      if (!txt) return;
+      if (!txt) {
+        const el = document.getElementById("nuevo-sem-" + g.clave);
+        if (el) el.focus();
+        return;
+      }
       agregarObjetivo({
         categoria: A.area,
         seccion: g.seccion,
@@ -4904,6 +4908,12 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
         prioridad: filtroPrioridad || "semanal",
         completado: false
       });
+      setNuevoSem({ ...nuevoSem, [g.clave]: "" });
+    };
+    const detallesEn = (g) => {
+      const txt = (nuevoSem[g.clave] || "").trim();
+      setAbiertasSem({ ...abiertasSem, [g.clave]: true });
+      abrirNuevo(A.area, g.seccion, "", { tarea: txt, dia: diaSem && diaSem !== "sin" ? diaSem : "" });
       setNuevoSem({ ...nuevoSem, [g.clave]: "" });
     };
     const marcar = (o) => o.esRecurrente ? onToggleRecurrente && onToggleRecurrente(o.id) : toggleObjetivoSem(o);
@@ -4987,22 +4997,49 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
         /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[15px] font-bold truncate" }, a.area), /* @__PURE__ */ React.createElement("span", { className: `block text-xs mt-0.5 ${on ? "opacity-80" : "text-neutral-500 dark:text-neutral-400"}` }, its.length ? `${u ? u + (u > 1 ? " urgentes \xB7 " : " urgente \xB7 ") : ""}${its.length - k} pendientes` : "nada esta semana")),
         /* @__PURE__ */ React.createElement("span", { className: `text-[13px] font-extrabold tabular-nums px-2 py-1 rounded-lg ${on ? "bg-amber-500/20 dark:bg-neutral-950/15" : "bg-neutral-100 dark:bg-neutral-800"}` }, k, "/", its.length)
       );
-    })), /* @__PURE__ */ React.createElement("main", { className: "flex flex-col gap-3 min-w-0" }, /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 sm:p-6 flex items-center gap-5 flex-wrap", style: { background: A.color, color: tintaSobre(A.color) } }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[200px]" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-4xl font-extrabold leading-none tracking-tight" }, A.area), /* @__PURE__ */ React.createElement("div", { className: "text-sm font-semibold mt-2 opacity-85 tabular-nums" }, itemsA.length, " objetivos esta semana \xB7 ", sinDiaA, " sin d\xEDa")), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[220px] max-w-md" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between text-sm font-bold tabular-nums" }, /* @__PURE__ */ React.createElement("span", null, "Cumplido esta semana"), /* @__PURE__ */ React.createElement("span", null, okA, "/", itemsA.length)), /* @__PURE__ */ React.createElement("div", { className: "h-2.5 rounded-full mt-2 overflow-hidden", style: { background: "rgba(0,0,0,0.14)" } }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full", style: { width: (itemsA.length ? Math.round(okA / itemsA.length * 100) : 0) + "%", background: tintaSobre(A.color) } })))), grupos.map((g) => {
+    })), /* @__PURE__ */ React.createElement("main", { className: "flex flex-col gap-3 min-w-0" }, /* @__PURE__ */ React.createElement("section", { className: "rounded-2xl p-5 sm:p-6 flex items-center gap-5 flex-wrap", style: { background: A.color, color: tintaSobre(A.color) } }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[200px]" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-4xl font-extrabold leading-none tracking-tight" }, A.area), /* @__PURE__ */ React.createElement("div", { className: "text-sm font-semibold mt-2 opacity-85 tabular-nums" }, itemsA.length, " objetivos esta semana \xB7 ", sinDiaA, " sin d\xEDa")), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[220px] max-w-md" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between text-sm font-bold tabular-nums" }, /* @__PURE__ */ React.createElement("span", null, "Cumplido esta semana"), /* @__PURE__ */ React.createElement("span", null, okA, "/", itemsA.length)), /* @__PURE__ */ React.createElement("div", { className: "h-2.5 rounded-full mt-2 overflow-hidden", style: { background: "rgba(0,0,0,0.14)" } }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full", style: { width: (itemsA.length ? Math.round(okA / itemsA.length * 100) : 0) + "%", background: tintaSobre(A.color) } }))), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => abrirNuevo(A.area, "", "", diaSem && diaSem !== "sin" ? { dia: diaSem } : null),
+        className: "shrink-0 min-h-[46px] px-4 rounded-xl text-sm font-bold flex items-center gap-2",
+        style: { background: tintaSobre(A.color), color: A.color }
+      },
+      /* @__PURE__ */ React.createElement(Plus, { size: 16, strokeWidth: 2.5 }),
+      " Nuevo objetivo"
+    )), formularioSi(A.area, "", ""), grupos.map((g) => {
       const ab = abiertasSem[g.clave] !== void 0 ? abiertasSem[g.clave] : true;
       const vis = g.items.filter((it) => pasaDia(it.o));
       const k = g.items.filter((it) => it.o.completado).length;
-      return /* @__PURE__ */ React.createElement("section", { key: g.clave, className: "rounded-2xl bg-white dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("section", { key: g.clave, className: "rounded-2xl bg-white dark:bg-neutral-900 overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 pr-3" }, /* @__PURE__ */ React.createElement(
         "button",
         {
           type: "button",
           onClick: () => setAbiertasSem({ ...abiertasSem, [g.clave]: !ab }),
           "aria-expanded": ab,
-          className: "w-full flex items-center gap-3.5 px-5 py-3.5 min-h-[60px] text-left"
+          className: "flex-1 min-w-0 flex items-center gap-3.5 pl-5 py-3.5 min-h-[60px] text-left"
         },
         /* @__PURE__ */ React.createElement(ChevronRight, { size: 18, strokeWidth: 2.25, className: "text-neutral-400 shrink-0 transition-transform duration-200", style: { transform: ab ? "rotate(90deg)" : "none" } }),
         /* @__PURE__ */ React.createElement("span", { className: "flex-1 font-serif text-xl font-bold truncate" }, g.nombre),
         /* @__PURE__ */ React.createElement("span", { className: "text-[13px] font-bold tabular-nums text-neutral-500 dark:text-neutral-400" }, k, "/", g.items.length, " cumplidos")
-      ), ab && /* @__PURE__ */ React.createElement("div", { className: "px-5 pb-4 flex flex-col gap-1.5" }, vis.map(({ o, sub }) => {
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => {
+            setAbiertasSem({ ...abiertasSem, [g.clave]: true });
+            setTimeout(() => {
+              const el = document.getElementById("nuevo-sem-" + g.clave);
+              if (el) el.focus();
+            }, 30);
+          },
+          title: `Nuevo objetivo en ${g.nombre}`,
+          "aria-label": `Nuevo objetivo en ${g.nombre}`,
+          className: "shrink-0 w-10 h-10 rounded-xl flex items-center justify-center",
+          style: { background: A.color, color: tintaSobre(A.color) }
+        },
+        /* @__PURE__ */ React.createElement(Plus, { size: 18, strokeWidth: 2.5 })
+      )), ab && g.seccion && formularioSi(A.area, g.seccion, ""), ab && /* @__PURE__ */ React.createElement("div", { className: "px-5 pb-4 flex flex-col gap-1.5" }, vis.map(({ o, sub }) => {
         const on = selSem !== null && String(selSem) === String(o.id);
         const P = PRIO[o.prioridad] || PRIO.semanal;
         const lp = lpTitulo(o);
@@ -5027,19 +5064,43 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
           ),
           /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setSelSem(on ? null : o.id), className: "flex-1 min-w-0 flex items-center gap-2.5 text-left" }, /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-[15px] font-semibold ${o.completado ? "line-through text-neutral-400" : ""}` }, itemTitulo(o)), meta && /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 truncate" }, meta)), /* @__PURE__ */ React.createElement("span", { className: `hidden sm:inline-block text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 ${P[1]}` }, P[0]), /* @__PURE__ */ React.createElement("span", { className: `min-w-[84px] text-center text-xs font-bold px-2.5 py-1.5 rounded-lg tabular-nums shrink-0 ${o.dia ? "bg-neutral-100 dark:bg-neutral-800" : "border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-600 text-neutral-500"}` }, cuandoTxt(o)))
         );
-      }), vis.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm text-neutral-600 dark:text-neutral-300" }, g.items.length ? "Nada con ese filtro en esta secci\xF3n." : "Nada para esta semana ac\xE1."), /* @__PURE__ */ React.createElement(
+      }), vis.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm text-neutral-600 dark:text-neutral-300" }, g.items.length ? "Nada con ese filtro en esta secci\xF3n." : "Nada para esta semana ac\xE1."), /* @__PURE__ */ React.createElement("div", { className: "mt-1 flex items-center gap-2 flex-wrap sm:flex-nowrap" }, /* @__PURE__ */ React.createElement(
         "input",
         {
+          id: "nuevo-sem-" + g.clave,
           value: nuevoSem[g.clave] || "",
           onChange: (e) => setNuevoSem({ ...nuevoSem, [g.clave]: e.target.value }),
           onKeyDown: (e) => {
-            if (e.key === "Enter") crearEn(g);
+            if (e.key === "Enter" || e.keyCode === 13) {
+              e.preventDefault();
+              crearEn(g);
+            }
           },
-          placeholder: `+ Objetivo en ${g.nombre}${diaSem && diaSem !== "sin" ? " para el " + (DIAS.find((d) => d.key === diaSem) || {}).full : ""} (Enter)`,
+          enterKeyHint: "done",
+          placeholder: `Escrib\xED un objetivo para ${g.nombre}${diaSem && diaSem !== "sin" ? " (" + (DIAS.find((d) => d.key === diaSem) || {}).full + ")" : ""}\u2026`,
           "aria-label": `Nuevo objetivo en ${g.nombre}`,
-          className: "mt-1 min-h-[44px] px-3.5 rounded-xl border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-700 bg-transparent text-sm outline-none focus:border-amber-500"
+          className: "flex-1 min-w-[180px] min-h-[44px] px-3.5 rounded-xl border-[1.5px] border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-sm outline-none focus:border-amber-500"
         }
-      )));
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => crearEn(g),
+          className: "min-h-[44px] px-4 rounded-xl text-sm font-bold flex items-center gap-1.5 shrink-0",
+          style: { background: A.color, color: tintaSobre(A.color) }
+        },
+        /* @__PURE__ */ React.createElement(Plus, { size: 15, strokeWidth: 2.5 }),
+        " Agregar"
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => detallesEn(g),
+          title: "Abrir el formulario completo: d\xEDa, hora, subsecci\xF3n, prioridad, aviso\u2026",
+          className: "min-h-[44px] px-3 rounded-xl text-sm font-bold shrink-0 bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200"
+        },
+        "Con d\xEDa y hora\u2026"
+      ))));
     }), grupos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-6 text-sm text-neutral-500" }, 'Esta \xE1rea todav\xEDa no tiene secciones en "I have a dream".')), oSel && (() => {
       const o = oSel;
       const lp = lpTitulo(o);
@@ -5467,7 +5528,7 @@ function ObjetivoForm({ inicial, onGuardar, onCancelar, seccionesPorCategoria, s
       ...inicial && inicial.id ? {} : { _aviso: aviso }
     });
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, inicial ? "Editar objetivo" : "Nuevo objetivo"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "1. Categor\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(\xE1reas definidas en Largo plazo)")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300 font-medium" }, inicial && inicial.id ? "Editar objetivo" : "Nuevo objetivo"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "1. Categor\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(\xE1reas definidas en Largo plazo)")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, areaList.map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.key,
@@ -5632,7 +5693,7 @@ Coincide con ${ETIQUETA_COINCIDENCIA[f.nivel]}.${sel ? "\n\nClick de nuevo para 
       onClick: handleGuardar,
       className: "px-3 py-1.5 rounded-md bg-amber-500 text-neutral-950 text-sm font-medium"
     },
-    inicial ? "Guardar" : "Agregar"
+    inicial && inicial.id ? "Guardar" : "Agregar"
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
