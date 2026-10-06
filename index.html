@@ -11424,11 +11424,7 @@ function parsearNotaObjetivos(texto, taxonomia) {
   String(texto || "").split("\n").forEach((raw, i) => {
     const r = partirRenglonNota(raw);
     if (!r.txt) return;
-    if (r.pasado) {
-      pasados.push(i);
-      return;
-    }
-    if (r.rayas < 3) {
+    if (r.rayas < 3 && !r.pasado) {
       const secDe = (a, x) => a ? (a.secciones || []).find((sx) => sx.nombre && normTxtNota(sx.nombre) === normTxtNota(x)) : null;
       const subDe = (sx, x) => sx ? (sx.subsecciones || []).find((n) => n && normTxtNota(n) === normTxtNota(x)) : null;
       const prueba = {
@@ -11465,7 +11461,11 @@ function parsearNotaObjetivos(texto, taxonomia) {
       if (r.rayas > 0) avisos.push({ linea: i, texto: r.txt, motivo: `tiene ${r.rayas === 1 ? "una raya" : "dos rayas"} pero no es ${r.rayas === 1 ? "una secci\xF3n" : "una subsecci\xF3n"} de "I have a dream": se toma como objetivo` });
     }
     if (!A) {
-      avisos.push({ linea: i, texto: r.txt, motivo: "no tiene un \xE1rea arriba: no se pasa", fuera: true });
+      avisos.push({ linea: i, texto: r.txt, crudo: raw, motivo: "no tiene un \xE1rea arriba: no se pasa", fuera: true });
+      return;
+    }
+    if (r.pasado) {
+      pasados.push({ linea: i, categoria: A.area, seccion: S ? S.nombre : "", subseccion: S ? U : "", tarea: r.txt.replace(/^✓\s*/, "") });
       return;
     }
     items.push({ linea: i, categoria: A.area, seccion: S ? S.nombre : "", subseccion: S ? U : "", tarea: r.txt.replace(/^✓\s*/, "") });
@@ -11491,6 +11491,70 @@ function plantillaObjetivosSemana(taxonomia, pendientes) {
   });
   return out.join("\n").replace(/\n+$/, "") + "\n";
 }
+function serializarArbolNota(taxonomia, todos, crudos) {
+  const out = (crudos || []).slice();
+  if (out.length) out.push("");
+  const lin = (p) => "--- " + (p.pasado ? "\u2713 " : "") + p.tarea;
+  (taxonomia || []).filter((t) => t && t.area).forEach((t) => {
+    const de = (se, su) => todos.filter((p) => p.categoria === t.area && (p.seccion || "") === se && (p.subseccion || "") === su);
+    out.push(t.area);
+    de("", "").forEach((p) => out.push(lin(p)));
+    (t.secciones || []).filter((sx) => sx.nombre).forEach((sx) => {
+      out.push("- " + sx.nombre);
+      de(sx.nombre, "").forEach((p) => out.push(lin(p)));
+      (sx.subsecciones || []).filter(Boolean).forEach((n) => {
+        out.push("-- " + n);
+        de(sx.nombre, n).forEach((p) => out.push(lin(p)));
+      });
+    });
+    out.push("");
+  });
+  return out.join("\n").replace(/\n+$/, "") + "\n";
+}
+const ARBOL_COL = { area: "#3FB27F", seccion: "#5B8DEF", sub: "#E0674F" };
+function RamaNota({ color, ultimo, children }) {
+  return /* @__PURE__ */ React.createElement("div", { className: "relative pl-7" }, /* @__PURE__ */ React.createElement("span", { "aria-hidden": "true", style: { position: "absolute", left: 9, top: 0, width: 3, height: ultimo ? 21 : "100%", background: color, borderRadius: 2 } }), /* @__PURE__ */ React.createElement("span", { "aria-hidden": "true", style: { position: "absolute", left: 9, top: 19, width: 15, height: 3, background: color, borderRadius: 2 } }), children);
+}
+function ObjNotaInput({ valor, onCambio, onBorrar, onEnter, placeholder, esNuevo, inputRef }) {
+  const [v, setV] = useState(valor || "");
+  useEffect(() => {
+    if (!esNuevo && (valor || "") !== v && v.trim()) setV(valor || "");
+  }, [valor]);
+  return /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      ref: inputRef,
+      value: v,
+      onChange: (e) => {
+        setV(e.target.value);
+        if (!esNuevo && e.target.value.trim()) onCambio(e.target.value.trim());
+      },
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (esNuevo) {
+            if (v.trim()) {
+              onCambio(v.trim());
+              setV("");
+            }
+          } else if (onEnter) onEnter();
+        }
+      },
+      onBlur: () => {
+        if (esNuevo) {
+          if (v.trim()) {
+            onCambio(v.trim());
+            setV("");
+          }
+        } else if (!v.trim() && onBorrar) onBorrar();
+      },
+      enterKeyHint: esNuevo ? "enter" : "next",
+      autoCapitalize: "sentences",
+      placeholder,
+      className: `w-full min-w-0 bg-transparent outline-none py-1.5 text-[15px] border-b ${esNuevo ? "border-dashed border-neutral-300 dark:border-neutral-700 placeholder:text-neutral-400" : "border-transparent focus:border-amber-500"}`
+    }
+  );
+}
 function NotaTexto({ nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) {
   const [texto, setTexto] = useState(nota.texto || "");
   const [vista, setVista] = useState(null);
@@ -11498,8 +11562,12 @@ function NotaTexto({ nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) {
   const ref = useRef(null);
   const timer = useRef(null);
   const esObj = nota.especial === "objsem";
+  const [vistaNota, setVistaNota] = useState(esObj ? "arbol" : "texto");
+  const [plegadas, setPlegadas] = useState({});
+  const nuevosRef = useRef({});
   useEffect(() => {
-    if ((nota.texto || "") !== texto && document.activeElement !== ref.current) setTexto(nota.texto || "");
+    const escribiendo = document.activeElement && (document.activeElement === ref.current || document.activeElement.tagName === "INPUT");
+    if ((nota.texto || "") !== texto && !escribiendo) setTexto(nota.texto || "");
   }, [nota.texto]);
   useEffect(() => () => clearTimeout(timer.current), []);
   function guardarYa(v) {
@@ -11587,13 +11655,94 @@ OJO: ${r.avisos.filter((a) => a.fuera).length} rengl\xF3n(es) sin \xE1rea se pie
     setVista(null);
     setHecho(r.items.length);
   }
+  const arbol = esObj && vistaNota === "arbol" ? parsearNotaObjetivos(texto, taxonomia) : null;
+  const todos = arbol ? arbol.items.map((x) => ({ ...x, pasado: false })).concat(arbol.pasados.map((x) => ({ ...x, pasado: true }))).sort((a, b) => a.linea - b.linea) : [];
+  const crudos = arbol ? arbol.avisos.filter((a) => a.fuera).map((a) => a.crudo) : [];
+  const escribirArbol = (lista) => cambiar(serializarArbolNota(taxonomia, lista, crudos));
+  const enRama = (c, se, su) => todos.filter((p) => p.categoria === c && (p.seccion || "") === se && (p.subseccion || "") === su);
+  function renglones(c, se, su, conNuevo, color) {
+    const lista = enRama(c, se, su);
+    const clave = c + "|" + se + "|" + su;
+    const nodos = lista.map((p, k) => /* @__PURE__ */ React.createElement(RamaNota, { key: clave + "|" + k, color, ultimo: !conNuevo && k === lista.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-h-[40px]" }, p.pasado ? /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0 py-1.5 text-[15px] text-neutral-400 truncate", title: "Ya est\xE1 en Obj. semanales" }, "\u2713 ", p.tarea) : /* @__PURE__ */ React.createElement(
+      ObjNotaInput,
+      {
+        valor: p.tarea,
+        onCambio: (t) => escribirArbol(todos.map((x) => x === p ? { ...x, tarea: t } : x)),
+        onBorrar: () => escribirArbol(todos.filter((x) => x !== p)),
+        onEnter: () => {
+          const el = nuevosRef.current[clave];
+          if (el) el.focus();
+        }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => escribirArbol(todos.filter((x) => x !== p)),
+        "aria-label": "Sacar de la nota",
+        title: p.pasado ? "Sacarlo de la nota (en Obj. semanales sigue estando)" : "Borrar este rengl\xF3n",
+        className: "shrink-0 w-8 h-8 rounded-lg text-neutral-400 hover:text-red-500 flex items-center justify-center"
+      },
+      /* @__PURE__ */ React.createElement(X, { size: 14 })
+    ))));
+    if (conNuevo) nodos.push(
+      /* @__PURE__ */ React.createElement(RamaNota, { key: clave + "|nuevo", color, ultimo: true }, /* @__PURE__ */ React.createElement("div", { className: "min-h-[40px] flex items-center pr-10" }, /* @__PURE__ */ React.createElement(
+        ObjNotaInput,
+        {
+          esNuevo: true,
+          valor: "",
+          placeholder: "+ escrib\xED un objetivo\u2026",
+          inputRef: (el) => {
+            nuevosRef.current[clave] = el;
+          },
+          onCambio: (t) => escribirArbol(todos.concat([{ categoria: c, seccion: se, subseccion: su, tarea: t, pasado: false, linea: 1e9 }]))
+        }
+      )))
+    );
+    return nodos;
+  }
+  const arbolVista = arbol && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-5 space-y-6" }, crudos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-3 text-sm" }, /* @__PURE__ */ React.createElement("b", null, crudos.length, " rengl\xF3n(es) sin \xE1rea"), " (se ven en la vista Texto): ", crudos.map((x) => x.trim()).join(" \xB7 ")), (taxonomia || []).filter((t) => t && t.area).map((t) => {
+    const secs = (t.secciones || []).filter((sx) => sx.nombre);
+    const deArea = enRama(t.area, "", "");
+    const pleg = !!plegadas[t.area];
+    const pend = todos.filter((p) => p.categoria === t.area && !p.pasado).length;
+    return /* @__PURE__ */ React.createElement("div", { key: t.area }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setPlegadas({ ...plegadas, [t.area]: !pleg }),
+        className: "flex items-center gap-2 font-serif text-2xl font-extrabold",
+        style: { color: ARBOL_COL.area },
+        "aria-expanded": !pleg
+      },
+      /* @__PURE__ */ React.createElement(ChevronRight, { size: 18, strokeWidth: 2.5, style: { transform: pleg ? "none" : "rotate(90deg)", transition: "transform .15s" } }),
+      t.area,
+      pend > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold font-sans px-2 py-0.5 rounded-full", style: { background: ARBOL_COL.area + "22" } }, pend)
+    ), !pleg && /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, deArea.length > 0 && renglones(t.area, "", "", false, ARBOL_COL.area), secs.map((sx, i) => {
+      const subs = (sx.subsecciones || []).filter(Boolean);
+      return /* @__PURE__ */ React.createElement(RamaNota, { key: sx.nombre, color: ARBOL_COL.area, ultimo: i === secs.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "text-[19px] font-bold leading-10", style: { color: ARBOL_COL.seccion } }, sx.nombre), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, renglones(t.area, sx.nombre, "", subs.length === 0, ARBOL_COL.seccion), subs.map((n, j) => /* @__PURE__ */ React.createElement(RamaNota, { key: n, color: ARBOL_COL.seccion, ultimo: j === subs.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "text-[16px] font-bold leading-10", style: { color: ARBOL_COL.sub } }, n), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, renglones(t.area, sx.nombre, n, true, ARBOL_COL.sub))))));
+    }), secs.length === 0 && renglones(t.area, "", "", true, ARBOL_COL.area)));
+  }));
   const grupos = vista ? vista.items.reduce((acc, it) => {
     const k = [it.categoria, it.seccion, it.subseccion].filter(Boolean).join(" \u203A ");
     (acc[k] = acc[k] || []).push(it);
     return acc;
   }, {}) : {};
   const sinTax = !(taxonomia || []).some((t) => t && t.area);
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, esObj && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-3 flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500 mr-auto" }, "\xC1rea sola \xB7 ", /* @__PURE__ */ React.createElement("b", null, "-"), " secci\xF3n \xB7 ", /* @__PURE__ */ React.createElement("b", null, "--"), " subsecci\xF3n \xB7 ", /* @__PURE__ */ React.createElement("b", null, "---"), " objetivo. Lo pasado queda con \u2713."), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, esObj && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-3 flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex p-1 rounded-xl bg-neutral-100 dark:bg-neutral-800", role: "group", "aria-label": "Vista de la nota" }, [["arbol", "\xC1rbol"], ["texto", "Texto"]].map(([k, l]) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: k,
+      type: "button",
+      onClick: () => {
+        guardarYa(texto);
+        setVistaNota(k);
+      },
+      "aria-pressed": vistaNota === k,
+      className: `min-h-[34px] px-3 rounded-lg text-sm font-bold ${vistaNota === k ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "text-neutral-600 dark:text-neutral-300"}`
+    },
+    l
+  ))), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500 mr-auto" }, vistaNota === "arbol" ? "Escrib\xED en cada rama; Enter agrega otro. Lo pasado queda con \u2713." : /* @__PURE__ */ React.createElement(React.Fragment, null, "\xC1rea sola \xB7 ", /* @__PURE__ */ React.createElement("b", null, "-"), " secci\xF3n \xB7 ", /* @__PURE__ */ React.createElement("b", null, "--"), " subsecci\xF3n \xB7 ", /* @__PURE__ */ React.createElement("b", null, "---"), " objetivo. Lo pasado queda con \u2713.")), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -11612,7 +11761,7 @@ OJO: ${r.avisos.filter((a) => a.fuera).length} rengl\xF3n(es) sin \xE1rea se pie
     },
     /* @__PURE__ */ React.createElement(ArrowRight, { size: 15, strokeWidth: 2.5 }),
     " Pasar a Obj. semanales"
-  )), esObj && sinTax && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-3 text-sm" }, 'Todav\xEDa no hay \xE1reas en "I have a dream": armalas ah\xED y despu\xE9s toc\xE1 ', /* @__PURE__ */ React.createElement("b", null, "Rearmar plantilla"), "."), vista && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-500 bg-white dark:bg-neutral-900 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg font-bold" }, vista.items.length ? `Se van a crear ${vista.items.length} objetivo(s), sin d\xEDa` : "No hay objetivos nuevos para pasar"), Object.keys(grupos).map((k) => /* @__PURE__ */ React.createElement("div", { key: k }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold text-neutral-500 dark:text-neutral-400" }, k), /* @__PURE__ */ React.createElement("ul", { className: "mt-1 space-y-0.5" }, grupos[k].map((it) => /* @__PURE__ */ React.createElement("li", { key: it.linea, className: "text-sm" }, "\u2022 ", it.tarea))))), vista.avisos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-2.5 space-y-1" }, vista.avisos.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.linea, className: "text-xs" }, /* @__PURE__ */ React.createElement("b", null, "\u201C", a.texto, "\u201D"), " \u2014 ", a.motivo))), vista.pasados.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500" }, vista.pasados.length, " rengl\xF3n(es) con \u2713 ya se hab\xEDan pasado: no se repiten."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, vista.items.length > 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: pasar, className: "min-h-[44px] px-4 rounded-xl bg-amber-500 text-neutral-950 text-sm font-bold" }, "Pasar ", vista.items.length), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setVista(null), className: "min-h-[44px] px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-bold" }, vista.items.length ? "Cancelar" : "Cerrar"))), hecho !== null && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-jade-600 dark:bg-jade-500 text-white p-3 flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold" }, "\u2713 ", hecho, " objetivo(s) en Obj. semanales, sin d\xEDa."), irAObjetivos && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: irAObjetivos, className: "ml-auto min-h-[40px] px-3.5 rounded-xl bg-white/20 text-sm font-bold" }, "Ir a ponerles horario \u2192")), /* @__PURE__ */ React.createElement(
+  )), esObj && sinTax && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-3 text-sm" }, 'Todav\xEDa no hay \xE1reas en "I have a dream": armalas ah\xED y despu\xE9s toc\xE1 ', /* @__PURE__ */ React.createElement("b", null, "Rearmar plantilla"), "."), vista && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-500 bg-white dark:bg-neutral-900 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg font-bold" }, vista.items.length ? `Se van a crear ${vista.items.length} objetivo(s), sin d\xEDa` : "No hay objetivos nuevos para pasar"), Object.keys(grupos).map((k) => /* @__PURE__ */ React.createElement("div", { key: k }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold text-neutral-500 dark:text-neutral-400" }, k), /* @__PURE__ */ React.createElement("ul", { className: "mt-1 space-y-0.5" }, grupos[k].map((it) => /* @__PURE__ */ React.createElement("li", { key: it.linea, className: "text-sm" }, "\u2022 ", it.tarea))))), vista.avisos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-2.5 space-y-1" }, vista.avisos.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.linea, className: "text-xs" }, /* @__PURE__ */ React.createElement("b", null, "\u201C", a.texto, "\u201D"), " \u2014 ", a.motivo))), vista.pasados.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500" }, vista.pasados.length, " rengl\xF3n(es) con \u2713 ya se hab\xEDan pasado: no se repiten."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, vista.items.length > 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: pasar, className: "min-h-[44px] px-4 rounded-xl bg-amber-500 text-neutral-950 text-sm font-bold" }, "Pasar ", vista.items.length), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setVista(null), className: "min-h-[44px] px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-bold" }, vista.items.length ? "Cancelar" : "Cerrar"))), hecho !== null && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-jade-600 dark:bg-jade-500 text-white p-3 flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold" }, "\u2713 ", hecho, " objetivo(s) en Obj. semanales, sin d\xEDa."), irAObjetivos && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: irAObjetivos, className: "ml-auto min-h-[40px] px-3.5 rounded-xl bg-white/20 text-sm font-bold" }, "Ir a ponerles horario \u2192")), arbolVista, !arbolVista && /* @__PURE__ */ React.createElement(
     "textarea",
     {
       ref,
