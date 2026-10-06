@@ -4679,7 +4679,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
   }
   function formularioSi(c, se, su) {
     if (!nuevoEn || claveRama(nuevoEn.categoria, nuevoEn.seccion, nuevoEn.subseccion) !== claveRama(c, se, su)) return null;
-    return /* @__PURE__ */ React.createElement("div", { className: "px-3.5 pb-3.5 pt-1" }, /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { id: "form-nuevo-" + claveRama(c, se, su), className: "px-3.5 pb-3.5 pt-1 scroll-mt-28" }, /* @__PURE__ */ React.createElement(
       ObjetivoForm,
       {
         inicial: { ...nuevoEn, categoria: c, seccion: se, subseccion: su },
@@ -4915,6 +4915,16 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
       setAbiertasSem({ ...abiertasSem, [g.clave]: true });
       abrirNuevo(A.area, g.seccion, "", { tarea: txt, dia: diaSem && diaSem !== "sin" ? diaSem : "" });
       setNuevoSem({ ...nuevoSem, [g.clave]: "" });
+      setEditando(null);
+      setMostrarForm(false);
+      setTimeout(() => {
+        const el = document.getElementById("form-nuevo-" + claveRama(A.area, g.seccion, ""));
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          const t = el.querySelector("input[placeholder^='Ej:']");
+          if (t) t.focus({ preventScroll: true });
+        }
+      }, 60);
     };
     const marcar = (o) => o.esRecurrente ? onToggleRecurrente && onToggleRecurrente(o.id) : toggleObjetivoSem(o);
     return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mr-1.5" }, "D\xEDa"), DIAS.map((d, i) => {
@@ -5001,7 +5011,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
       "button",
       {
         type: "button",
-        onClick: () => abrirNuevo(A.area, "", "", diaSem && diaSem !== "sin" ? { dia: diaSem } : null),
+        onClick: () => detallesEn({ clave: A.area + "::\u2014", seccion: "" }),
         className: "shrink-0 min-h-[46px] px-4 rounded-xl text-sm font-bold flex items-center gap-2",
         style: { background: tintaSobre(A.color), color: A.color }
       },
@@ -5026,13 +5036,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
         "button",
         {
           type: "button",
-          onClick: () => {
-            setAbiertasSem({ ...abiertasSem, [g.clave]: true });
-            setTimeout(() => {
-              const el = document.getElementById("nuevo-sem-" + g.clave);
-              if (el) el.focus();
-            }, 30);
-          },
+          onClick: () => detallesEn(g),
           title: `Nuevo objetivo en ${g.nombre}`,
           "aria-label": `Nuevo objetivo en ${g.nombre}`,
           className: "shrink-0 w-10 h-10 rounded-xl flex items-center justify-center",
@@ -5085,21 +5089,13 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
         "button",
         {
           type: "button",
-          onClick: () => crearEn(g),
+          onClick: () => detallesEn(g),
+          title: "Abre el formulario completo, ya en esta secci\xF3n (Enter guarda directo, sin d\xEDa)",
           className: "min-h-[44px] px-4 rounded-xl text-sm font-bold flex items-center gap-1.5 shrink-0",
           style: { background: A.color, color: tintaSobre(A.color) }
         },
         /* @__PURE__ */ React.createElement(Plus, { size: 15, strokeWidth: 2.5 }),
         " Agregar"
-      ), /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          type: "button",
-          onClick: () => detallesEn(g),
-          title: "Abrir el formulario completo: d\xEDa, hora, subsecci\xF3n, prioridad, aviso\u2026",
-          className: "min-h-[44px] px-3 rounded-xl text-sm font-bold shrink-0 bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200"
-        },
-        "Con d\xEDa y hora\u2026"
       ))));
     }), grupos.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-6 text-sm text-neutral-500" }, 'Esta \xE1rea todav\xEDa no tiene secciones en "I have a dream".')), oSel && (() => {
       const o = oSel;
