@@ -590,7 +590,6 @@
       },
       set: function(key, value) {
         localStorage.setItem(key, value);
-        if (window.JarvisBackup) window.JarvisBackup.schedule();
         return Promise.resolve();
       },
       remove: function(key) {
@@ -652,157 +651,6 @@
   </script>
 
   <!-- Dashboard JSX -->
-  <!-- Backup a archivo (File System Access API): jarvis_backup.json se escribe solo en cada cambio -->
-  <script>
-    (function () {
-      function idb(mode, val) {
-        return new Promise(function (res, rej) {
-          var r = indexedDB.open("jarvis-backup", 1);
-          r.onupgradeneeded = function () { r.result.createObjectStore("kv"); };
-          r.onerror = function () { rej(r.error); };
-          r.onsuccess = function () {
-            var db = r.result;
-            var tx = db.transaction("kv", mode === "get" ? "readonly" : "readwrite");
-            var st = tx.objectStore("kv");
-            var rq = mode === "get" ? st.get("handle") : mode === "set" ? st.put(val, "handle") : st.delete("handle");
-            rq.onsuccess = function () { res(rq.result); };
-            rq.onerror = function () { rej(rq.error); };
-          };
-        });
-      }
-      function collect() {
-        var o = {};
-        for (var i = 0; i < localStorage.length; i++) {
-          var k = localStorage.key(i);
-          if (k && (k.indexOf("martin:") === 0 || k.indexOf("jarvis:") === 0)) o[k] = localStorage.getItem(k);
-        }
-        return { app: "jarvis-dashboard", version: 1, savedAt: new Date().toISOString(), data: o };
-      }
-      function apply(obj) {
-        if (!obj || !obj.data) return 0;
-        var n = 0, k;
-        for (k in obj.data) { if (Object.prototype.hasOwnProperty.call(obj.data, k)) { localStorage.setItem(k, obj.data[k]); n++; } }
-        if (obj.savedAt) localStorage.setItem("jarvis:lastSavedAt", obj.savedAt);
-        return n;
-      }
-      // ¿Hay trabajo real en este navegador? (cualquier clave de datos)
-      function hayDatosLocales() {
-        for (var i = 0; i < localStorage.length; i++) {
-          var k = localStorage.key(i);
-          if (k && k.indexOf("martin:") === 0) return true;
-        }
-        return false;
-      }
-
-      var handle = null, name = "", timer = null, statusCb = null, muteSchedule = false;
-      function notify() { if (statusCb) statusCb({ connected: !!handle, name: name }); }
-      async function ensure(mode) {
-        if (!handle) return false;
-        var p = await handle.queryPermission({ mode: mode });
-        if (p === "granted") return true;
-        p = await handle.requestPermission({ mode: mode });
-        return p === "granted";
-      }
-      async function write(force) {
-        if (!handle) return;
-        try {
-          if (!(await ensure("readwrite"))) {
-            // Sin permiso de escritura el backup queda congelado y, peor, en el
-            // próximo F5 podría restaurar una versión vieja. Se avisa fuerte.
-            console.warn("[Jarvis] BACKUP SIN PERMISO DE ESCRITURA — tus cambios NO se están guardando en el archivo.");
-            return;
-          }
-          var snap = collect();
-          var w = await handle.createWritable();
-          await w.write(JSON.stringify(snap, null, 2));
-          await w.close();
-          localStorage.setItem("jarvis:lastSavedAt", snap.savedAt);
-          notify();
-        } catch (e) { console.warn("[Jarvis] backup write:", e && e.message); }
-      }
-      function schedule() {
-        if (!handle || muteSchedule) return;
-        clearTimeout(timer);
-        timer = setTimeout(function () { write(false); }, 1200);
-      }
-      async function connect() {
-        if (!window.showSaveFilePicker) { alert("Tu navegador no soporta guardar en archivo automático.\nAbrí el dashboard con start_dashboard.bat (localhost) en Chrome/Edge."); return false; }
-        handle = await window.showSaveFilePicker({ suggestedName: "jarvis_backup.json", types: [{ description: "JSON", accept: { "application/json": [".json"] } }] });
-        await idb("set", handle); name = handle.name;
-        await write(true); notify(); return true;
-      }
-      async function restore() {
-        if (!handle) {
-          if (!window.showOpenFilePicker) { alert("No soportado en este navegador."); return 0; }
-          var arr = await window.showOpenFilePicker({ types: [{ description: "JSON", accept: { "application/json": [".json"] } }] });
-          handle = arr[0]; await idb("set", handle); name = handle.name;
-        }
-        if (!(await ensure("read"))) return 0;
-        var f = await handle.getFile();
-        var obj = JSON.parse(await f.text());
-        muteSchedule = true; var n = apply(obj); muteSchedule = false;
-        notify(); return n;
-      }
-      async function restoreSilent() {
-        try {
-          handle = await idb("get");
-          if (!handle) return 0;
-          name = handle.name;
-          var p = await handle.queryPermission({ mode: "read" });
-          notify();
-          if (p !== "granted") return 0;
-          var f = await handle.getFile();
-          var obj = JSON.parse(await f.text());
-          if (!(obj && obj.data && Object.keys(obj.data).length)) return 0;
-          // GUARDA CRÍTICA: nunca pisar trabajo reciente con un backup viejo.
-          // Si en este navegador ya hay datos y el archivo es anterior a la
-          // última vez que guardamos, el archivo está desactualizado (típico:
-          // se perdió el permiso de escritura). Se ignora y se avisa.
-          var localAt = localStorage.getItem("jarvis:lastSavedAt") || "";
-          var fileAt = obj.savedAt || "";
-          if (hayDatosLocales() && (!fileAt || (localAt && fileAt < localAt))) {
-            console.warn("[Jarvis] backup IGNORADO por ser más viejo que lo guardado acá (archivo: " + (fileAt || "sin fecha") + " · local: " + localAt + "). Reconectá el backup para volver a escribirlo.");
-            return 0;
-          }
-          muteSchedule = true; var n = apply(obj); muteSchedule = false; return n;
-        } catch (e) { return 0; }
-      }
-      async function disconnect() { handle = null; name = ""; try { await idb("del"); } catch (_) {} notify(); }
-      function exportCopy() {
-        var blob = new Blob([JSON.stringify(collect(), null, 2)], { type: "application/json" });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement("a"); a.href = url; a.download = "jarvis_backup.json";
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-      }
-      // Importar desde un File cualquiera (el que devuelve <input type="file">).
-      // Anda en TODOS los navegadores, incluido el celular.
-      function importFile(file) {
-        return new Promise(function (resolve) {
-          if (!file) { resolve(0); return; }
-          var fr = new FileReader();
-          fr.onload = function () {
-            try {
-              var obj = JSON.parse(fr.result);
-              if (!obj || !obj.data) { resolve(-1); return; }
-              muteSchedule = true;
-              var n = apply(obj);
-              muteSchedule = false;
-              resolve(n);
-            } catch (e) { resolve(-1); }
-          };
-          fr.onerror = function () { resolve(-1); };
-          fr.readAsText(file);
-        });
-      }
-
-      window.JarvisBackup = {
-        connect: connect, restore: restore, restoreSilent: restoreSilent, disconnect: disconnect,
-        write: write, schedule: schedule, exportCopy: exportCopy, importFile: importFile,
-        onStatus: function (cb) { statusCb = cb; notify(); },
-        status: function () { return { connected: !!handle, name: name }; }
-      };
-    })();
-  </script>
 
 
   <!-- ==================================================================
@@ -1474,19 +1322,199 @@
         docRef: function () { return ref; }
       };
 
-      // Si se importa un backup, que también vaya a la nube.
-      if (window.JarvisBackup && window.JarvisBackup.importFile) {
-        var impOrig = window.JarvisBackup.importFile;
-        window.JarvisBackup.importFile = function (f) {
-          return impOrig.call(window.JarvisBackup, f).then(function (n) {
-            if (n > 0) adoptarTodo();
-            return n;
-          });
-        };
-      }
     })();
   </script>
 
+
+  <!-- ==================================================================
+       Google Calendar (sólo lectura, por ahora)
+       ------------------------------------------------------------------
+       Se conecta con la MISMA cuenta de Google con la que se entró: se le
+       pide a Google un permiso extra (ver el Calendario) con una ventanita.
+       - El permiso que da Google dura una hora y vive SOLO en esta sesión
+         (sessionStorage, nunca viaja a la nube). Cuando vence, "Actualizar"
+         lo vuelve a pedir con un toque.
+       - Lo que se leyó (próximos 14 días) se guarda en martin:gcal, que sí
+         viaja con la cuenta: lo leído en la compu se ve en el celular.
+       - Requisito único: la API de Google Calendar habilitada en el
+         proyecto jarvis-6f7a8 de Google Cloud.
+       ================================================================== -->
+  <script>
+    (function () {
+      var SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+      var KEY = "martin:gcal";
+      var TOK = "jarvis:gcal_token";
+      var DIAS = 14;
+      var oyentes = [];
+      var errorUlt = "";
+      var ocupado = false;
+
+      function leer() { try { return JSON.parse(localStorage.getItem(KEY) || "null") || {}; } catch (_) { return {}; } }
+      function guardar(o) {
+        var v = JSON.stringify(o);
+        if (window.storage && window.storage.set) window.storage.set(KEY, v);
+        else { try { localStorage.setItem(KEY, v); } catch (_) {} }
+      }
+      function usuario() { return (window.firebase && firebase.auth && firebase.auth().currentUser) || null; }
+      function tokenVigente() {
+        try {
+          var t = JSON.parse(sessionStorage.getItem(TOK) || "null"), u = usuario();
+          if (t && u && t.uid === u.uid && t.exp > Date.now() + 60000) return t.token;
+        } catch (_) {}
+        return null;
+      }
+      function estado() {
+        var d = leer();
+        return {
+          conectado: !!d.conectado, email: d.email || "", ultima: d.ultima || null,
+          eventos: d.eventos || [], calendarios: d.calendarios || [],
+          tokenVivo: !!tokenVigente(), error: errorUlt, ocupado: ocupado,
+          hayCuenta: !!usuario()
+        };
+      }
+      function avisar() { var s = estado(); oyentes.forEach(function (f) { try { f(s); } catch (_) {} }); }
+
+      function p2(n) { return ("0" + n).slice(-2); }
+      function fechaLocal(d) { return d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()); }
+
+      // Misma forma que un EVENTO de Jarvis (fecha, hora, duracion, titulo),
+      // para poder sumarlos a Mi día / Semana sin traducir nada.
+      function normalizar(ev, cal) {
+        if (!ev || ev.status === "cancelled" || !ev.start) return null;
+        var todo = !!ev.start.date;
+        var ini = todo ? ev.start.date : ev.start.dateTime;
+        if (!ini) return null;
+        var dIni = todo ? null : new Date(ini);
+        var fin = ev.end && (ev.end.dateTime || ev.end.date);
+        return {
+          id: cal.id + "|" + ev.id,
+          titulo: ev.summary || "(sin título)",
+          fecha: todo ? ini : fechaLocal(dIni),
+          hora: todo ? null : p2(dIni.getHours()) + ":" + p2(dIni.getMinutes()),
+          duracion: todo || !fin ? null : Math.max(5, Math.round((new Date(fin) - dIni) / 60000)),
+          todoElDia: todo,
+          calendario: cal.summaryOverride || cal.summary || "",
+          color: cal.backgroundColor || null,
+          lugar: ev.location || "",
+          link: ev.htmlLink || ""
+        };
+      }
+
+      function api(ruta, tok) {
+        return fetch("https://www.googleapis.com/calendar/v3/" + ruta, { headers: { Authorization: "Bearer " + tok } })
+          .then(function (r) {
+            return r.json().catch(function () { return {}; }).then(function (j) {
+              if (r.ok) return j;
+              var er = (j && j.error) || {};
+              var e = new Error(er.message || ("HTTP " + r.status));
+              e.status = r.status;
+              e.razon = ((er.errors && er.errors[0]) || {}).reason || er.status || "";
+              e.texto = JSON.stringify(er);
+              throw e;
+            });
+          });
+      }
+
+      function explicar(e) {
+        var c = (e && e.code) || "", t = ((e && e.texto) || "") + " " + ((e && e.message) || "");
+        if (c === "auth/popup-closed-by-user" || c === "auth/cancelled-popup-request") return "";
+        if (c === "auth/popup-blocked") return "El navegador bloqueó la ventanita de Google. Permití las ventanas emergentes para este sitio y volvé a tocar el botón.";
+        if (c === "auth/user-mismatch") return "Elegiste otra cuenta de Google. Tiene que ser la misma con la que entraste a Jarvis" + (usuario() && usuario().email ? " (" + usuario().email + ")" : "") + ".";
+        if (c === "auth/network-request-failed") return "Sin conexión. Probá de nuevo cuando haya internet.";
+        if (c === "gcal/vencido") return "";
+        if (/SERVICE_DISABLED|accessNotConfigured|has not been used|is disabled/i.test(t))
+          return "API_APAGADA";
+        if (e && e.status === 403 && /insufficient|PERMISSION_DENIED|scope/i.test(t))
+          return "Google no dio permiso para ver el Calendario: en la ventanita hay que dejar TILDADA la casilla del Calendario. Volvé a conectar.";
+        if (e && e.status === 401) return "El permiso de Google venció. Tocá “Actualizar” para renovarlo.";
+        return "No pude leer el Calendario: " + ((e && e.message) || "error desconocido");
+      }
+
+      function actualizar() {
+        var tok = tokenVigente();
+        if (!tok) { var v = new Error("vencido"); v.code = "gcal/vencido"; return Promise.reject(v); }
+        ocupado = true; avisar();
+        var desde = new Date(); desde.setHours(0, 0, 0, 0);
+        var hasta = new Date(desde); hasta.setDate(hasta.getDate() + DIAS);
+        var rango = "&timeMin=" + encodeURIComponent(desde.toISOString()) + "&timeMax=" + encodeURIComponent(hasta.toISOString());
+        return api("users/me/calendarList?minAccessRole=reader&maxResults=50", tok).then(function (lista) {
+          var cals = (lista.items || []).filter(function (c) { return c.selected !== false && !c.hidden && !c.deleted; });
+          return Promise.all(cals.map(function (c) {
+            return api("calendars/" + encodeURIComponent(c.id) + "/events?singleEvents=true&orderBy=startTime&maxResults=100" + rango, tok)
+              .then(function (j) { return (j.items || []).map(function (ev) { return normalizar(ev, c); }); },
+                    function () { return []; });   // un calendario que falla no tira abajo a los demás
+          })).then(function (grupos) {
+            var eventos = [].concat.apply([], grupos).filter(Boolean);
+            eventos.sort(function (a, b) {
+              return (a.fecha + (a.hora || "00:00")).localeCompare(b.fecha + (b.hora || "00:00"));
+            });
+            var d = leer();
+            d.conectado = true;
+            d.email = (usuario() && usuario().email) || d.email || "";
+            d.ultima = new Date().toISOString();
+            d.eventos = eventos.slice(0, 300);
+            d.calendarios = cals.map(function (c) { return { id: c.id, nombre: c.summaryOverride || c.summary || "", color: c.backgroundColor || null }; });
+            guardar(d);
+            errorUlt = "";
+            return d.eventos;
+          });
+        }).catch(function (e) {
+          if (e && e.status === 401) { try { sessionStorage.removeItem(TOK); } catch (_) {} }
+          errorUlt = explicar(e);
+          throw e;
+        }).finally(function () { ocupado = false; avisar(); });
+      }
+
+      // Pide (o renueva) el permiso con la MISMA cuenta con la que se entró.
+      function conectar() {
+        var u = usuario();
+        if (!u) { errorUlt = "Primero entrá a Jarvis con tu cuenta de Google."; avisar(); return Promise.reject(new Error(errorUlt)); }
+        var yaConectado = !!leer().conectado;
+        var p = new firebase.auth.GoogleAuthProvider();
+        p.addScope(SCOPE);
+        var params = { login_hint: u.email || "", include_granted_scopes: "true" };
+        if (!yaConectado) params.prompt = "consent";
+        p.setCustomParameters(params);
+        ocupado = true; errorUlt = ""; avisar();
+        return u.reauthenticateWithPopup(p).then(function (r) {
+          var tok = r && r.credential && r.credential.accessToken;
+          if (!tok) throw new Error("Google no devolvió el permiso del Calendario.");
+          sessionStorage.setItem(TOK, JSON.stringify({ token: tok, uid: u.uid, exp: Date.now() + 55 * 60 * 1000 }));
+          var d = leer(); d.conectado = true; d.email = u.email || ""; guardar(d);
+          ocupado = false;
+          return actualizar();
+        }).catch(function (e) {
+          ocupado = false;
+          if (!errorUlt) errorUlt = explicar(e);
+          avisar();
+          throw e;
+        });
+      }
+
+      // Actualizar si el permiso sigue vivo; si venció, pedirlo de nuevo.
+      function refrescar() { return tokenVigente() ? actualizar() : conectar(); }
+
+      function desconectar() {
+        try { sessionStorage.removeItem(TOK); } catch (_) {}
+        guardar({ conectado: false });
+        errorUlt = "";
+        avisar();
+      }
+
+      function eventosDe(fechaISO) {
+        return (leer().eventos || []).filter(function (e) { return e.fecha === fechaISO; });
+      }
+
+      window.JarvisGCal = {
+        conectar: conectar, actualizar: actualizar, refrescar: refrescar, desconectar: desconectar,
+        estado: estado, eventosDe: eventosDe, tokenVivo: function () { return !!tokenVigente(); },
+        onCambio: function (cb) {
+          oyentes.push(cb); cb(estado());
+          return function () { oyentes = oyentes.filter(function (f) { return f !== cb; }); };
+        }
+      };
+    })();
+  </script>
 
   <!-- ==================================================================
        Notificaciones del navegador ("campanita")
@@ -2066,6 +2094,7 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const Calendar = LucideIcon("Calendar");
 const Target = LucideIcon("Target");
+const Type = LucideIcon("Type");
 const BookOpen = LucideIcon("BookOpen");
 const Dumbbell = LucideIcon("Dumbbell");
 const Heart = LucideIcon("Heart");
@@ -2713,6 +2742,7 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
       seccion: b.seccion,
       subseccion: b.subseccion,
       tipo: "custom",
+      origenSemana: b.origen === "semana",
       // Las actividades creadas a mano (desde Semana o Mi día) mandan sobre la
       // rutina igual que un objetivo semanal: el paso 7 le recorta el lugar al
       // bloque estructural que pisen, sin tocar la pestaña Rutina.
@@ -2776,6 +2806,10 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
         return;
       }
       if (ov.oculto) return;
+      if (Object.keys(ov).every((k) => k === "mantener")) {
+        conSemana.push({ ...it, mantener: !!ov.mantener });
+        return;
+      }
       conSemana.push({
         ...it,
         hora: ov.hora || it.hora,
@@ -2820,6 +2854,60 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
       };
     });
   }
+  const desplazados = [];
+  if (semKey) {
+    const esDeSemana = (it) => !!(it.semanaEditado || it.tipo === "evento" || it.tipo === "custom" && it.origenSemana);
+    const mandan = finales.filter(esDeSemana).map((d) => {
+      const a = timeToMinutes(d.hora);
+      return { ini: a, fin: a + (d.duracion || 30), titulo: d.titulo };
+    });
+    if (mandan.length) {
+      const quedan = [];
+      finales.forEach((it) => {
+        if (esDeSemana(it) || it.tipo === "objetivo" || (it.objetivosAcoplados || []).length) {
+          quedan.push(it);
+          return;
+        }
+        const ini = timeToMinutes(it.hora), fin = ini + (it.duracion || 30);
+        const pisan = mandan.filter((m) => m.ini < fin && m.fin > ini);
+        if (!pisan.length) {
+          quedan.push(it);
+          return;
+        }
+        const por = pisan.map((m) => m.titulo);
+        const base = { id: it.id, titulo: it.titulo, hora: it.hora, duracion: it.duracion, por };
+        if (it.mantener) {
+          desplazados.push({ ...base, estado: "mantenida" });
+          quedan.push(it);
+          return;
+        }
+        let libres = [[ini, fin]];
+        pisan.forEach((m) => {
+          libres = libres.reduce((acc, [x, y]) => {
+            if (m.fin <= x || m.ini >= y) {
+              acc.push([x, y]);
+              return acc;
+            }
+            if (m.ini > x) acc.push([x, m.ini]);
+            if (m.fin < y) acc.push([m.fin, y]);
+            return acc;
+          }, []);
+        });
+        libres.sort((p, q) => q[1] - q[0] - (p[1] - p[0]));
+        const mejor = libres[0];
+        if (!mejor || mejor[1] - mejor[0] < 10) {
+          desplazados.push({ ...base, estado: "tapada" });
+          return;
+        }
+        const nh = minutesToTime(mejor[0]), nd = mejor[1] - mejor[0];
+        desplazados.push({ ...base, estado: "corrida", nuevaHora: nh, nuevaDuracion: nd });
+        quedan.push({ ...it, hora: nh, duracion: nd, corridaPor: por, horaRutina: it.hora, duracionRutina: it.duracion });
+      });
+      finales.length = 0;
+      Array.prototype.push.apply(finales, quedan);
+    }
+  }
+  finales.desplazados = desplazados;
   finales.sort((a, b) => timeToMinutes(a.hora) - timeToMinutes(b.hora));
   const prioritarios = finales.filter((it) => it.prioritario);
   if (prioritarios.length === 0) return finales;
@@ -3413,6 +3501,57 @@ function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: ob
     DIAS[dayIdx].full.toLowerCase()
   )));
 }
+function DuracionLibre({ value, onChange, disabled, className }) {
+  const total = Math.max(0, Math.round(Number(value) || 0));
+  const [h, setH] = useState(String(Math.floor(total / 60)));
+  const [m, setM] = useState(String(total % 60));
+  useEffect(() => {
+    const actual = (parseInt(h, 10) || 0) * 60 + (parseInt(m, 10) || 0);
+    if (actual !== total) {
+      setH(String(Math.floor(total / 60)));
+      setM(String(total % 60));
+    }
+  }, [total]);
+  function cambiar(nh, nm) {
+    setH(nh);
+    setM(nm);
+    const t = Math.max(0, parseInt(nh, 10) || 0) * 60 + Math.max(0, parseInt(nm, 10) || 0);
+    if (t > 0) onChange(t);
+  }
+  const caja = "w-[3.4rem] text-center tabular-nums bg-transparent outline-none disabled:opacity-50";
+  return /* @__PURE__ */ React.createElement("div", { className: `${className || ""} inline-flex items-center gap-1`, title: "Escrib\xED la duraci\xF3n que quieras: horas y minutos" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "number",
+      inputMode: "numeric",
+      min: "0",
+      max: "23",
+      value: h,
+      disabled,
+      onChange: (e) => cambiar(e.target.value, m),
+      "aria-label": "Horas",
+      className: caja
+    }
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500" }, "h"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "number",
+      inputMode: "numeric",
+      min: "0",
+      max: "59",
+      step: "5",
+      value: m,
+      disabled,
+      onChange: (e) => cambiar(h, e.target.value),
+      onBlur: () => {
+        const n = parseInt(m, 10) || 0;
+        if (n >= 60) cambiar(String((parseInt(h, 10) || 0) + Math.floor(n / 60)), String(n % 60));
+      },
+      "aria-label": "Minutos",
+      className: caja
+    }
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500" }, "min"));
+}
 function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, alcanceSemanal, onVolverARutina, seccion, notifClave, notifDia }) {
   const avIni = avisoDe(notifClave);
   const [avisar, setAvisar] = useState(avIni.avisar);
@@ -3439,7 +3578,7 @@ function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, a
       className: "rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/40 dark:bg-orange-950/20 p-3 space-y-2.5",
       onClick: (e) => e.stopPropagation()
     },
-    /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Hora"), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: hora, onChange: (e) => setHora(e.target.value), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Duraci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: duracion, onChange: (e) => setDuracion(Number(e.target.value)), className: inputCls }, DURACIONES.map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, durLabel(d))))), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[160px]" }, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Actividad", alcanceSemanal && seccion && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " \u2014 qu\xE9 es, esta semana, tu \u201C", seccion, "\u201D")), /* @__PURE__ */ React.createElement("input", { type: "text", value: titulo, onChange: (e) => setTitulo(e.target.value), placeholder: alcanceSemanal ? "Ej: Armar propuesta S&C" : "Ej: Llamada con cliente", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "\xC1rea"), /* @__PURE__ */ React.createElement("select", { value: area, onChange: (e) => setArea(e.target.value), className: inputCls }, areasVivasLista().map((a) => /* @__PURE__ */ React.createElement("option", { key: a.key, value: a.key }, a.key))))),
+    /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Hora"), /* @__PURE__ */ React.createElement("input", { type: "time", step: "60", value: hora, onChange: (e) => setHora(e.target.value), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Duraci\xF3n"), /* @__PURE__ */ React.createElement(DuracionLibre, { value: duracion, onChange: (v) => setDuracion(v), className: inputCls })), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-[160px]" }, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Actividad", alcanceSemanal && seccion && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " \u2014 qu\xE9 es, esta semana, tu \u201C", seccion, "\u201D")), /* @__PURE__ */ React.createElement("input", { type: "text", value: titulo, onChange: (e) => setTitulo(e.target.value), placeholder: alcanceSemanal ? "Ej: Armar propuesta S&C" : "Ej: Llamada con cliente", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "\xC1rea"), /* @__PURE__ */ React.createElement("select", { value: area, onChange: (e) => setArea(e.target.value), className: inputCls }, areasVivasLista().map((a) => /* @__PURE__ */ React.createElement("option", { key: a.key, value: a.key }, a.key))))),
     /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Tareas de la actividad ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(una por l\xEDnea \u2014 se ven como checklist dentro del bloque)")), /* @__PURE__ */ React.createElement(
       "textarea",
       {
@@ -3474,7 +3613,7 @@ function BloqueEditForm({ inicial, esCustom, onGuardar, onOcultar, onCancelar, a
       },
       "Volver a la rutina"
     ), /* @__PURE__ */ React.createElement("button", { onClick: onCancelar, className: "px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm" }, "Cancelar")),
-    /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400" }, alcanceSemanal ? "Vale SOLO para esta semana: la actividad queda concretada ac\xE1 y en Rutina la secci\xF3n sigue igual. La semana que viene vuelve a la estructura general." : "La edici\xF3n aplica solo a este d\xEDa del calendario semanal. El Sheets sigue siendo la fuente al sincronizar; tus ediciones se re-aplican encima.")
+    /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-neutral-400" }, alcanceSemanal ? "Vale SOLO para esta semana: la actividad queda concretada ac\xE1 y en Rutina la secci\xF3n sigue igual. La semana que viene vuelve a la estructura general." : "La edici\xF3n aplica solo a este d\xEDa del calendario semanal; la rutina base no se toca.")
   );
 }
 function avisoDe(clave) {
@@ -3605,7 +3744,7 @@ function EventoForm({ inicial, fechaSugerida, taxonomia, onGuardar, onEliminar, 
       placeholder: "Ej: Rendida de Biolog\xEDa \xB7 Turno m\xE9dico \xB7 Reuni\xF3n con Paz",
       className: `${inputCls} w-full`
     }
-  )), /* @__PURE__ */ React.createElement("div", { className: "jarvis-form-3 grid grid-cols-3 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "5. Fecha"), /* @__PURE__ */ React.createElement("input", { type: "date", value: fecha, onChange: (e) => setFecha(e.target.value), className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "6. Hora ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional)")), /* @__PURE__ */ React.createElement("input", { type: "time", step: "300", value: hora, onChange: (e) => setHora(e.target.value), className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "7. Duraci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: duracion, onChange: (e) => setDuracion(Number(e.target.value)), disabled: !hora, className: `${inputCls} w-full` }, DURACIONES.map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, durLabel(d)))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "Detalle ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional \u2014 qu\xE9 llevar, con qui\xE9n, d\xF3nde)")), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { className: "jarvis-form-3 grid grid-cols-3 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "5. Fecha"), /* @__PURE__ */ React.createElement("input", { type: "date", value: fecha, onChange: (e) => setFecha(e.target.value), className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "6. Hora ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional)")), /* @__PURE__ */ React.createElement("input", { type: "time", step: "300", value: hora, onChange: (e) => setHora(e.target.value), className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "7. Duraci\xF3n"), /* @__PURE__ */ React.createElement(DuracionLibre, { value: duracion, onChange: (v) => setDuracion(v), disabled: !hora, className: `${inputCls} w-full` }))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "Detalle ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional \u2014 qu\xE9 llevar, con qui\xE9n, d\xF3nde)")), /* @__PURE__ */ React.createElement(
     "textarea",
     {
       value: descripcion,
@@ -3937,7 +4076,9 @@ function VistaSemanal({ objetivos: objetivosProp, now, weekDates, setSelectedDay
     return diasOrdenados.map((d) => {
       const iDia = DIAS.findIndex((x) => x.key === d.key);
       const fechaDia = weekDates && weekDates[iDia] ? fechaISOde(weekDates[iDia]) : null;
-      const agenda = buildDayAgenda(d.key, objetivos, semKey, fechaDia).filter((b) => (b.duracion || 0) > 0).filter((b) => areaVisible(b.area));
+      const crudo = buildDayAgenda(d.key, objetivos, semKey, fechaDia);
+      const desplazados = crudo.desplazados || [];
+      const agenda = crudo.filter((b) => (b.duracion || 0) > 0).filter((b) => areaVisible(b.area));
       const porInicio = {};
       const ocupados = /* @__PURE__ */ new Set();
       const dueno = {};
@@ -3967,7 +4108,7 @@ function VistaSemanal({ objetivos: objetivosProp, now, weekDates, setSelectedDay
           if (i > idx) ocupados.add(slots[i]);
         }
       });
-      return { dia: d, agenda, porInicio, ocupados };
+      return { dia: d, agenda, porInicio, ocupados, desplazados };
     });
   }, [objetivos, slots, rutinaTick, slotIdxDe, semKey, areaVisible, weekDates]);
   return /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Semana"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-neutral-500" }, editMode ? "Click en un bloque \u2192 concretar qu\xE9 hac\xE9s esa franja ESTA semana \xB7 click en una celda vac\xEDa \u2192 crear actividad de ese d\xEDa. Rutina no se toca." : `\u2605 = objetivo o actividad propia: pisa la rutina sin borrarla de su pesta\xF1a. ${punteroFino ? "Arrastr\xE1" : "Toc\xE1"} los objetivos sin fecha del checklist de abajo para agendarlos. Click \u2192 detalle del d\xEDa.`), onReiniciarSemana && /* @__PURE__ */ React.createElement(
@@ -4013,9 +4154,10 @@ NO se toca: la Rutina ni los Objetivos semanales.
     editMode ? "Listo" : "Editar semana"
   ))), (() => {
     const cosas = cosasDeLaSemana ? cosasDeLaSemana() : [];
-    if (!cosas.length || !onDeshacerSemana) return null;
+    const corridas = diasData.reduce((acc, dd) => acc.concat((dd.desplazados || []).map((x) => ({ ...x, dia: dd.dia }))), []);
+    if (!cosas.length && !corridas.length || !onDeshacerSemana) return null;
     const ocultas = cosas.filter((c) => c.oculto).length;
-    return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-sky-300/60 dark:border-sky-900/60 bg-sky-50/50 dark:bg-sky-950/15 p-3 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-sky-700 dark:text-sky-300" }, "Esta semana, encima de tu rutina \u2014 ", cosas.length, " cambio(s)", ocultas > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 font-normal" }, " \xB7 ", ocultas, " sin mostrarse en la grilla")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-1" }, cosas.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.dia + "::" + c.bloqueId, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-900 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 shrink-0 w-16" }, c.diaFull.slice(0, 3), " ", c.hora), c.oculto ? /* @__PURE__ */ React.createElement("span", { className: "truncate" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "oculta:"), " ", c.original || "\u2014") : /* @__PURE__ */ React.createElement("span", { className: "truncate" }, c.titulo, c.original && c.original !== c.titulo && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " (era ", c.original, ")")), /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border border-sky-300/60 dark:border-sky-900/60 bg-sky-50/50 dark:bg-sky-950/15 p-3 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-sky-700 dark:text-sky-300" }, "Esta semana, encima de tu rutina", cosas.length ? ` \u2014 ${cosas.length} cambio(s)` : "", ocultas > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 font-normal" }, " \xB7 ", ocultas, " sin mostrarse en la grilla")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-1" }, cosas.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.dia + "::" + c.bloqueId, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-900 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 shrink-0 w-16" }, c.diaFull.slice(0, 3), " ", c.hora), c.oculto ? /* @__PURE__ */ React.createElement("span", { className: "truncate" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "oculta:"), " ", c.original || "\u2014") : /* @__PURE__ */ React.createElement("span", { className: "truncate" }, c.titulo, c.original && c.original !== c.titulo && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, " (era ", c.original, ")")), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onDeshacerSemana(c.dia, c.bloqueId),
@@ -4023,7 +4165,15 @@ NO se toca: la Rutina ni los Objetivos semanales.
         className: "ml-auto shrink-0 text-[11px] px-2 py-0.5 rounded border border-sky-400/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100/60 dark:hover:bg-sky-900/30"
       },
       c.oculto ? "Reponer" : "Volver a la rutina"
-    )))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500" }, "Se borra solo el domingo a las 13:00, cuando rearm\xE1s la semana. La rutina no se toca."));
+    )))), corridas.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-medium text-sky-700 dark:text-sky-300 pt-1" }, "Le dejaron lugar a lo de esta semana \u2014 ", corridas.length), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-1" }, corridas.map((x) => /* @__PURE__ */ React.createElement("div", { key: x.dia.key + "::" + x.id, className: "flex items-center gap-2 text-xs bg-white dark:bg-neutral-900 rounded-md px-2 py-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500 shrink-0 w-16" }, x.dia.full.slice(0, 3), " ", x.hora), /* @__PURE__ */ React.createElement("span", { className: "truncate", title: `Por: ${x.por.join(", ")}` }, x.titulo, " ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, x.estado === "tapada" ? "\u2014 tapada entera, no se muestra" : x.estado === "corrida" ? `\u2014 corrida a ${x.nuevaHora} (${x.nuevaDuracion}')` : "\u2014 se deja como en la rutina (se pisa)")), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => x.estado === "mantenida" ? onDeshacerSemana(x.dia.key, x.id) : onEditarBloque && onEditarBloque(x.dia.key, x.id, { mantener: true }),
+        title: x.estado === "mantenida" ? "Que vuelva a correrse para dejarle lugar a lo de esta semana" : "La deja con su hora y su duraci\xF3n de la rutina, aunque se pise",
+        className: "ml-auto shrink-0 text-[11px] px-2 py-0.5 rounded border border-sky-400/60 text-sky-700 dark:text-sky-300 hover:bg-sky-100/60 dark:hover:bg-sky-900/30"
+      },
+      x.estado === "mantenida" ? "Correrla" : "Dejala como en la rutina"
+    ))))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-neutral-500" }, "Se borra solo el domingo a las 13:00, cuando rearm\xE1s la semana. La rutina no se toca."));
   })(), editando && /* @__PURE__ */ React.createElement(
     BloqueEditForm,
     {
@@ -4194,7 +4344,8 @@ NO se toca: la Rutina ni los Objetivos semanales.
             title: (editMode ? `Editar: ${titulo} \u2014 arrastr\xE1 el borde inferior para cambiar la duraci\xF3n` : `${[bloque.subarea, bloque.titulo].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" \u203A ")} \xB7 ${bloque.hora} \xB7 ${bloque.duracion} min \xB7 ${bloque.area}`) + (esObjetivo ? `
 \u2605 Objetivo semanal \u2014 tiene prioridad sobre la rutina.` : bloque.tipo === "custom" ? `
 Actividad propia de la semana \u2014 pisa la rutina sin borrarla.` : "") + ((bloque.objetivosAcoplados || []).length ? `
-\u25C6 Es tu franja de "${bloque.acopladoDe}": esta semana la us\xE1s para ${bloque.objetivosAcoplados.map((o) => o.titulo).join(" y ")}.` : "") + ((bloque.pisadoPor || []).length ? `
+\u25C6 Es tu franja de "${bloque.acopladoDe}": esta semana la us\xE1s para ${bloque.objetivosAcoplados.map((o) => o.titulo).join(" y ")}.` : "") + ((bloque.corridaPor || []).length ? `
+\u2193 Esta semana se corri\xF3 para dejarle lugar a ${bloque.corridaPor.join(", ")} (en la rutina: ${bloque.horaRutina}, ${bloque.duracionRutina} min). La rutina no cambi\xF3.` : "") + ((bloque.pisadoPor || []).length ? `
 \u26A0 Se pisa en el horario con: ${bloque.pisadoPor.join(", ")} \u2014 nadie se movi\xF3, decid\xED vos cu\xE1l corr\xE9s.` : "") + ((bloque.pisaA || []).length ? `
 \u26A0 Se pisa en el horario con: ${bloque.pisaA.join(", ")} \u2014 nadie se movi\xF3, decid\xED vos cu\xE1l corr\xE9s.` : "") + (muerta ? `
 \u26A0 El \xE1rea "${bloque.area}" ya no existe en tu taxonom\xEDa \u2014 reclasificala desde Rutina.` : "") + (bloque.recortado ? `
@@ -4261,7 +4412,20 @@ ${bloque.subtareas.filter((x) => x.hecha).length}/${bloque.subtareas.length} sub
               "div",
               {
                 key: sim.id,
-                title: `${[sim.subarea, sim.titulo].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" \u203A ")} \xB7 ${sim.hora} \xB7 ${sim.duracion} min \xB7 ${sim.area}`,
+                role: "button",
+                onClick: (e) => {
+                  e.stopPropagation();
+                  if (editMode) {
+                    setEditando({ dayKey: dd.dia.key, bloque: sim });
+                    setCreando(null);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  } else {
+                    setSelectedDay(dd.dia.key);
+                    setTab("dia");
+                  }
+                },
+                className: "cursor-pointer hover:brightness-110",
+                title: `${editMode ? "Editar: " : ""}${[sim.subarea, sim.titulo].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" \u203A ")} \xB7 ${sim.hora} \xB7 ${sim.duracion} min \xB7 ${sim.area}`,
                 style: {
                   position: "absolute",
                   top: top + 1,
@@ -5166,7 +5330,7 @@ function ObjetivosSemanales({ objetivos, setObjetivos, asignarObjetivo, setTab, 
         "input",
         {
           type: "time",
-          step: "900",
+          step: "60",
           value: o.hora || "",
           disabled: !o.dia,
           onChange: (e) => o.dia && asignarObjetivo(o.id, o.dia, e.target.value || null),
@@ -5624,16 +5788,7 @@ Coincide con ${ETIQUETA_COINCIDENCIA[f.nivel]}.${sel ? "\n\nClick de nuevo para 
       },
       className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     }
-  )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "7. Duraci\xF3n ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(min)")), /* @__PURE__ */ React.createElement(
-    "select",
-    {
-      value: duracion,
-      onChange: (e) => setDuracion(Number(e.target.value)),
-      disabled: !hora,
-      className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
-    },
-    [15, 30, 45, 60, 90, 120, 150, 180, 240].map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}'` : ""}` : `${m}'`))
-  ))), hora && !acople && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 -mt-1.5" }, "Con d\xEDa + hora a mano, este objetivo ocupa ", /* @__PURE__ */ React.createElement("strong", null, "su propia franja"), ". Si cae encima de algo de tu rutina, las dos quedan como est\xE1n y Rutina te avisa del cruce."), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1 block" }, "7. Duraci\xF3n ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400 font-normal" }, "(min)")), /* @__PURE__ */ React.createElement(DuracionLibre, { value: duracion, onChange: (v) => setDuracion(v), disabled: !hora, className: "w-full px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm" }))), hora && !acople && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 -mt-1.5" }, "Con d\xEDa + hora a mano, este objetivo ocupa ", /* @__PURE__ */ React.createElement("strong", null, "su propia franja"), ". Si cae encima de algo de tu rutina, las dos quedan como est\xE1n y Rutina te avisa del cruce."), /* @__PURE__ */ React.createElement(
     CampoAviso,
     {
       avisar,
@@ -7122,7 +7277,7 @@ function PanelRecurrentes({ now, recs, setRecs, objetivos, taxonomia }) {
       placeholder: "Bajar el resumen del mes\nCruzarlo con las operaciones\nMandarlo a facturar",
       className: `${inputCls} w-full resize-y font-mono`
     }
-  )), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "5. Frecuencia"), /* @__PURE__ */ React.createElement("select", { value: nuevo.frecuencia, onChange: (e) => setNuevo({ ...nuevo, frecuencia: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "semanal" }, "Semanal"), /* @__PURE__ */ React.createElement("option", { value: "mensual" }, "Mensual"))), nuevo.frecuencia === "mensual" ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "6. D\xEDa del mes"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_mes || 1, onChange: (e) => setNuevo({ ...nuevo, dia_mes: Number(e.target.value) }), className: inputCls }, Array.from({ length: 31 }, (_, i) => i + 1).map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, d)))) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "6. D\xEDa de la semana"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_semana || "", onChange: (e) => setNuevo({ ...nuevo, dia_semana: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin d\xEDa fijo"), DIAS.map((d) => /* @__PURE__ */ React.createElement("option", { key: d.key, value: d.key }, d.full)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "7. Hora ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional)")), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: nuevo.hora, onChange: (e) => setNuevo({ ...nuevo, hora: e.target.value }), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "8. Duraci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: nuevo.duracion, onChange: (e) => setNuevo({ ...nuevo, duracion: Number(e.target.value) }), disabled: !nuevo.hora, className: inputCls }, DURACIONES.map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, durLabel(d)))))), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "5. Frecuencia"), /* @__PURE__ */ React.createElement("select", { value: nuevo.frecuencia, onChange: (e) => setNuevo({ ...nuevo, frecuencia: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "semanal" }, "Semanal"), /* @__PURE__ */ React.createElement("option", { value: "mensual" }, "Mensual"))), nuevo.frecuencia === "mensual" ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "6. D\xEDa del mes"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_mes || 1, onChange: (e) => setNuevo({ ...nuevo, dia_mes: Number(e.target.value) }), className: inputCls }, Array.from({ length: 31 }, (_, i) => i + 1).map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, d)))) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "6. D\xEDa de la semana"), /* @__PURE__ */ React.createElement("select", { value: nuevo.dia_semana || "", onChange: (e) => setNuevo({ ...nuevo, dia_semana: e.target.value }), className: inputCls }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin d\xEDa fijo"), DIAS.map((d) => /* @__PURE__ */ React.createElement("option", { key: d.key, value: d.key }, d.full)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "7. Hora ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(opcional)")), /* @__PURE__ */ React.createElement("input", { type: "time", step: "60", value: nuevo.hora, onChange: (e) => setNuevo({ ...nuevo, hora: e.target.value }), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "8. Duraci\xF3n"), /* @__PURE__ */ React.createElement(DuracionLibre, { value: nuevo.duracion, onChange: (v) => setNuevo({ ...nuevo, duracion: v }), disabled: !nuevo.hora, className: inputCls }))), /* @__PURE__ */ React.createElement(
     CampoAviso,
     {
       avisar,
@@ -7451,9 +7606,9 @@ function TareaRutinaForm({ inicial, onGuardar, onCancelar, onEliminar, objetivos
   )))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "2. Secci\xF3n (sub\xE1rea \u2014 es el t\xEDtulo que se ve en Semana)"), /* @__PURE__ */ React.createElement("select", { value: seccion, onChange: (e) => {
     setSeccion(e.target.value);
     setSubseccion("");
-  }, className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 eleg\xED una secci\xF3n \u2014"), secciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "3. Subsecci\xF3n (opcional)"), /* @__PURE__ */ React.createElement("select", { value: subseccion, onChange: (e) => setSubseccion(e.target.value), disabled: !seccion, className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, seccion ? "\u2014 sin subsecci\xF3n \u2014" : "eleg\xED secci\xF3n primero"), subsecciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "4. Tarea / detalle (opcional)"), /* @__PURE__ */ React.createElement("input", { type: "text", value: tarea, onChange: (e) => setTarea(e.target.value), placeholder: "Ej: Redacci\xF3n cap\xEDtulo 2...", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, conDias ? "Hora por defecto" : "Hora"), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: hora, onChange: (e) => aplicarDefecto("hora", e.target.value), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, conDias ? "Duraci\xF3n por defecto" : "Duraci\xF3n"), /* @__PURE__ */ React.createElement("select", { value: duracion, onChange: (e) => aplicarDefecto("duracion", Number(e.target.value)), className: inputCls }, DURACIONES.map((d) => /* @__PURE__ */ React.createElement("option", { key: d, value: d }, durLabel(d)))))), conDias && (propAviso ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-[11px] rounded-md border border-amber-300/60 dark:border-amber-800/60 bg-amber-50/70 dark:bg-amber-950/25 px-2.5 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-amber-700 dark:text-amber-300" }, "Se aplic\xF3 ", propAviso.campo === "hora" ? "la hora" : "la duraci\xF3n", " a ", /* @__PURE__ */ React.createElement("strong", null, propAviso.n), " ", propAviso.n === 1 ? "d\xEDa" : "d\xEDas", "."), /* @__PURE__ */ React.createElement("button", { onClick: deshacerPropagacion, className: "px-2 py-0.5 rounded border border-amber-400/70 text-amber-700 dark:text-amber-300" }, "Deshacer")) : /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-400 -mt-1" }, "La hora y la duraci\xF3n por defecto se aplican a ", /* @__PURE__ */ React.createElement("strong", null, "todos"), " los d\xEDas marcados. Despu\xE9s ajust\xE1 los que quieras en \u201CHorario por d\xEDa\u201D.")), conDias && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "5. D\xEDas (marc\xE1 uno o varios)"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, DIAS.map((d) => /* @__PURE__ */ React.createElement("button", { key: d.key, onClick: () => toggleDia(d.key), className: `text-xs px-2.5 py-1 rounded-md border transition ${dias.includes(d.key) ? "bg-amber-500 text-neutral-950 border-transparent" : "border-neutral-200 dark:border-neutral-700 text-neutral-500"}` }, d.es)))), conDias && dias.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block" }, "Horario por d\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(pod\xE9s poner distinta hora/duraci\xF3n en cada d\xEDa)")), DIAS.filter((d) => dias.includes(d.key)).map((d) => {
+  }, className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 eleg\xED una secci\xF3n \u2014"), secciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "3. Subsecci\xF3n (opcional)"), /* @__PURE__ */ React.createElement("select", { value: subseccion, onChange: (e) => setSubseccion(e.target.value), disabled: !seccion, className: `${inputCls} w-full` }, /* @__PURE__ */ React.createElement("option", { value: "" }, seccion ? "\u2014 sin subsecci\xF3n \u2014" : "eleg\xED secci\xF3n primero"), subsecciones.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "4. Tarea / detalle (opcional)"), /* @__PURE__ */ React.createElement("input", { type: "text", value: tarea, onChange: (e) => setTarea(e.target.value), placeholder: "Ej: Redacci\xF3n cap\xEDtulo 2...", className: `${inputCls} w-full` })), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-end" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, conDias ? "Hora por defecto" : "Hora"), /* @__PURE__ */ React.createElement("input", { type: "time", step: "60", value: hora, onChange: (e) => aplicarDefecto("hora", e.target.value), className: inputCls })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, conDias ? "Duraci\xF3n por defecto" : "Duraci\xF3n"), /* @__PURE__ */ React.createElement(DuracionLibre, { value: duracion, onChange: (v) => aplicarDefecto("duracion", v), className: inputCls }))), conDias && (propAviso ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-[11px] rounded-md border border-amber-300/60 dark:border-amber-800/60 bg-amber-50/70 dark:bg-amber-950/25 px-2.5 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-amber-700 dark:text-amber-300" }, "Se aplic\xF3 ", propAviso.campo === "hora" ? "la hora" : "la duraci\xF3n", " a ", /* @__PURE__ */ React.createElement("strong", null, propAviso.n), " ", propAviso.n === 1 ? "d\xEDa" : "d\xEDas", "."), /* @__PURE__ */ React.createElement("button", { onClick: deshacerPropagacion, className: "px-2 py-0.5 rounded border border-amber-400/70 text-amber-700 dark:text-amber-300" }, "Deshacer")) : /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-400 -mt-1" }, "La hora y la duraci\xF3n por defecto se aplican a ", /* @__PURE__ */ React.createElement("strong", null, "todos"), " los d\xEDas marcados. Despu\xE9s ajust\xE1 los que quieras en \u201CHorario por d\xEDa\u201D.")), conDias && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-1" }, "5. D\xEDas (marc\xE1 uno o varios)"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, DIAS.map((d) => /* @__PURE__ */ React.createElement("button", { key: d.key, onClick: () => toggleDia(d.key), className: `text-xs px-2.5 py-1 rounded-md border transition ${dias.includes(d.key) ? "bg-amber-500 text-neutral-950 border-transparent" : "border-neutral-200 dark:border-neutral-700 text-neutral-500"}` }, d.es)))), conDias && dias.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block" }, "Horario por d\xEDa ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(pod\xE9s poner distinta hora/duraci\xF3n en cada d\xEDa)")), DIAS.filter((d) => dias.includes(d.key)).map((d) => {
     const hv = horarios[d.key] || { hora, duracion };
-    return /* @__PURE__ */ React.createElement("div", { key: d.key, className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs w-20 text-neutral-500" }, d.full), /* @__PURE__ */ React.createElement("input", { type: "time", step: "900", value: hv.hora, onChange: (e) => updHorario(d.key, "hora", e.target.value), className: inputCls }), /* @__PURE__ */ React.createElement("select", { value: hv.duracion, onChange: (e) => updHorario(d.key, "duracion", Number(e.target.value)), className: inputCls }, DURACIONES.map((x) => /* @__PURE__ */ React.createElement("option", { key: x, value: x }, durLabel(x)))));
+    return /* @__PURE__ */ React.createElement("div", { key: d.key, className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs w-20 text-neutral-500" }, d.full), /* @__PURE__ */ React.createElement("input", { type: "time", step: "60", value: hv.hora, onChange: (e) => updHorario(d.key, "hora", e.target.value), className: inputCls }), /* @__PURE__ */ React.createElement(DuracionLibre, { value: hv.duracion, onChange: (v) => updHorario(d.key, "duracion", v), className: inputCls }));
   })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-neutral-500 block mb-0.5" }, "Tareas de la actividad ", /* @__PURE__ */ React.createElement("span", { className: "text-neutral-400" }, "(una por l\xEDnea \u2014 checklist dentro del bloque)")), /* @__PURE__ */ React.createElement("textarea", { value: subText, onChange: (e) => setSubText(e.target.value), rows: 2, className: `${inputCls} w-full font-mono text-xs` })), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("button", { onClick: guardar, className: "px-3 py-1.5 rounded-md bg-orange-600 text-white text-sm font-medium" }, "Guardar"), onEliminar && /* @__PURE__ */ React.createElement("button", { onClick: onEliminar, className: "px-3 py-1.5 rounded-md border border-red-200 dark:border-red-900 text-red-500 text-sm hover:bg-red-50 dark:hover:bg-red-950/30" }, "Eliminar"), /* @__PURE__ */ React.createElement("button", { onClick: onCancelar, className: "px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm" }, "Cancelar")));
 }
 function RutinaBase({ now, rutinaTick, rutinaGeneral, agregarRutinaGeneral, editarRutinaGeneral, eliminarRutinaGeneral, agregarBloqueMultidia, guardarBloqueDia, eliminarBloqueDia, objetivos, taxonomia, quitarOverrideRutina, moverBloqueASemana, contarOcultosRutina, reponerOcultosRutina, avisosDescartados, descartarAviso, restaurarAvisos }) {
@@ -7764,7 +7919,7 @@ Sigue estando en: ${DIAS.filter((d) => otros.includes(d.key)).map((d) => d.full)
   ) : /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setAddForm(true);
     setEditandoId(null);
-  }, className: "w-full py-2.5 rounded-xl border-2 border-dashed border-neutral-200 dark:border-neutral-800 text-sm text-neutral-400 hover:text-neutral-600 hover:border-neutral-300 dark:hover:border-neutral-700 flex items-center justify-center gap-1.5 transition-colors" }, /* @__PURE__ */ React.createElement(Plus, { size: 14 }), " Agregar actividad al ", selDayFull.toLowerCase())), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-400 leading-relaxed" }, 'Capas: el Sheets "2026" es la base al sincronizar \u2192 tu rutina general y ediciones se guardan en este navegador y se re-aplican encima. Al editar una tarea pod\xE9s cambiar su clasificaci\xF3n y, con los d\xEDas, moverla o repetirla en otros d\xEDas.'));
+  }, className: "w-full py-2.5 rounded-xl border-2 border-dashed border-neutral-200 dark:border-neutral-800 text-sm text-neutral-400 hover:text-neutral-600 hover:border-neutral-300 dark:hover:border-neutral-700 flex items-center justify-center gap-1.5 transition-colors" }, /* @__PURE__ */ React.createElement(Plus, { size: 14 }), " Agregar actividad al ", selDayFull.toLowerCase())), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-400 leading-relaxed" }, "Capas: la rutina base queda abajo \u2192 tu rutina general y tus ediciones se guardan aparte y se re-aplican encima. Al editar una tarea pod\xE9s cambiar su clasificaci\xF3n y, con los d\xEDas, moverla o repetirla en otros d\xEDas."));
 }
 const OBJETIVOS_LP_SEED = { version: 1, generated_at: "2026-07-07", objetivos: [] };
 const IMPORTANCIA_LP = {
@@ -9773,81 +9928,53 @@ function NubeControl() {
     /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-wide leading-none max-w-[74px] truncate" }, st.pendientes > 0 ? st.pendientes + " \u2191" : v.txt)
   );
 }
-function BackupControl() {
-  const [st, setSt] = useState(window.JarvisBackup ? window.JarvisBackup.status() : { connected: false, name: "" });
-  const [busy, setBusy] = useState(false);
+function GoogleCalendarCard() {
+  const api = window.JarvisGCal;
+  const [st, setSt] = useState(() => api ? api.estado() : null);
+  useEffect(() => api ? api.onCambio(setSt) : void 0, []);
   useEffect(() => {
-    if (window.JarvisBackup) window.JarvisBackup.onStatus(setSt);
+    if (!api) return;
+    const s = api.estado();
+    if (s.conectado && s.tokenVivo && (!s.ultima || Date.now() - new Date(s.ultima).getTime() > 15 * 6e4)) {
+      api.actualizar().catch(() => {
+      });
+    }
   }, []);
-  if (!window.JarvisBackup) return null;
-  const soportado = !!window.showSaveFilePicker;
-  async function doConnect() {
-    setBusy(true);
-    try {
-      await window.JarvisBackup.connect();
-    } catch (e) {
-    }
-    setBusy(false);
-  }
-  async function doRestore() {
-    if (!confirm("\xBFRestaurar TODOS los datos desde el archivo de backup? Reemplaza lo que tengas ahora.")) return;
-    setBusy(true);
-    try {
-      const n = await window.JarvisBackup.restore();
-      setBusy(false);
-      if (n > 0) {
-        alert(n + " datos restaurados. Recarg\xE1 para verlos.");
-        location.reload();
-      } else {
-        alert("No se restaur\xF3 nada (archivo vac\xEDo o sin permiso).");
-      }
-    } catch (e) {
-      setBusy(false);
-    }
-  }
-  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1" }, /* @__PURE__ */ React.createElement(
+  if (!api || !st) return null;
+  const hoyISO2 = fechaISOde(/* @__PURE__ */ new Date());
+  const mananaISO = fechaISOde(new Date(Date.now() + 864e5));
+  const proximos = (st.eventos || []).filter((e) => e.fecha >= hoyISO2).slice(0, 12);
+  const porDia = [];
+  proximos.forEach((e) => {
+    const g = porDia[porDia.length - 1];
+    if (g && g.fecha === e.fecha) g.items.push(e);
+    else porDia.push({ fecha: e.fecha, items: [e] });
+  });
+  const nombreDia = (iso) => {
+    if (iso === hoyISO2) return "Hoy";
+    if (iso === mananaISO) return "Ma\xF1ana";
+    const d = fechaDeISO(iso);
+    const t = d.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "short" });
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+  const ultima = st.ultima ? new Date(st.ultima).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null;
+  const apiApagada = st.error === "API_APAGADA";
+  const btnPrincipal = "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 bg-[#C9A227] text-neutral-950 hover:brightness-105";
+  const btnSecundario = "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors disabled:opacity-50 border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900";
+  return /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap", style: { marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2", style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)" } }, /* @__PURE__ */ React.createElement(Calendar, { size: 15 }), " Google Calendar"), st.conectado ? /* @__PURE__ */ React.createElement("span", { className: "text-[11px] px-2 py-0.5 rounded-full bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border border-green-300 dark:border-green-800" }, "Conectado") : /* @__PURE__ */ React.createElement("span", { className: "text-[11px] px-2 py-0.5 rounded-full border border-neutral-200 dark:border-neutral-800 text-neutral-500" }, "Sin conectar")), !st.conectado ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Jarvis lee los eventos de tus calendarios de Google (los pr\xF3ximos 14 d\xEDas). Por ahora s\xF3lo lee: no crea ni cambia nada en tu Calendar."), /* @__PURE__ */ React.createElement("button", { onClick: () => api.conectar().catch(() => {
+  }), disabled: st.ocupado || !st.hayCuenta, className: btnPrincipal }, /* @__PURE__ */ React.createElement(Calendar, { size: 15 }), " ", st.ocupado ? "Conectando\u2026" : "Conectar Google Calendar"), !st.hayCuenta && /* @__PURE__ */ React.createElement("p", { className: "text-[11.5px] text-neutral-500 mt-2" }, "Hace falta haber entrado a Jarvis con tu cuenta de Google.")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, st.email ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Cuenta ", /* @__PURE__ */ React.createElement("b", null, st.email), ". ") : null, ultima ? "\xDAltima lectura: " + ultima + "." : "Todav\xEDa no se ley\xF3 nada.", st.calendarios && st.calendarios.length ? " " + st.calendarios.length + (st.calendarios.length === 1 ? " calendario." : " calendarios.") : ""), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => api.refrescar().catch(() => {
+  }), disabled: st.ocupado, className: btnPrincipal }, /* @__PURE__ */ React.createElement(RefreshCw, { size: 14, className: st.ocupado ? "animate-spin" : "" }), st.ocupado ? "Leyendo\u2026" : "Actualizar"), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: doConnect,
-      disabled: busy,
-      title: st.connected ? "Backup en archivo: " + st.name + " \u2014 se guarda solo en cada cambio. Click para cambiar de archivo." : "Eleg\xED o cre\xE1 jarvis_backup.json \u2014 se guarda solo en cada cambio.",
-      className: `flex flex-col items-center justify-center gap-0.5 min-w-[52px] min-h-[44px] px-2.5 py-1.5 rounded-xl border transition-colors ${st.connected ? "border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 hover:bg-green-100" : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900"}`
+      onClick: () => {
+        if (window.confirm("\xBFDesconectar Google Calendar? Jarvis deja de mostrar tus eventos de Google en todos tus aparatos.")) api.desconectar();
+      },
+      disabled: st.ocupado,
+      className: btnSecundario
     },
-    /* @__PURE__ */ React.createElement("span", { className: "text-base" }, "\u{1F4BE}"),
-    /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold uppercase tracking-wide leading-none max-w-[74px] truncate ${st.connected ? "text-green-700 dark:text-green-400" : "text-neutral-500"}` }, st.connected ? st.name || "Backup" : soportado ? "Conectar" : "Export")
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-0.5" }, soportado && /* @__PURE__ */ React.createElement("button", { onClick: doRestore, disabled: busy, title: "Restaurar datos desde el archivo de backup conectado", className: "text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600" }, "Restaurar"), /* @__PURE__ */ React.createElement("button", { onClick: () => window.JarvisBackup.exportCopy(), title: "Descargar una copia del dashboard entero (jarvis_backup.json)", className: "text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600" }, "Copia"), /* @__PURE__ */ React.createElement(
-    "label",
-    {
-      title: "Cargar un jarvis_backup.json (as\xED tra\xE9s los datos de la computadora al celular)",
-      className: "text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:text-amber-600 cursor-pointer text-center"
-    },
-    "Importar",
-    /* @__PURE__ */ React.createElement(
-      "input",
-      {
-        type: "file",
-        accept: "application/json,.json",
-        className: "hidden",
-        onChange: async (e) => {
-          const f = e.target.files && e.target.files[0];
-          e.target.value = "";
-          if (!f) return;
-          if (!confirm("Importar este archivo reemplaza los datos de ESTE dispositivo por los del archivo.\n\n\xBFSeguimos?")) return;
-          setBusy(true);
-          const n = await window.JarvisBackup.importFile(f);
-          setBusy(false);
-          if (n > 0) {
-            alert(n + " datos importados. Recargo para mostrarlos.");
-            location.reload();
-          } else if (n === 0) {
-            alert("El archivo no ten\xEDa datos.");
-          } else {
-            alert("No pude leer el archivo: \xBFes un jarvis_backup.json?");
-          }
-        }
-      }
-    )
-  )));
+    /* @__PURE__ */ React.createElement(X, { size: 14 }),
+    " Desconectar"
+  ))), st.error && !apiApagada && /* @__PURE__ */ React.createElement("div", { className: "mt-3 text-[12px] px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300" }, st.error), apiApagada && /* @__PURE__ */ React.createElement("div", { className: "mt-3 text-[12px] px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("b", null, "Falta un paso \xFAnico en Google Cloud:"), " habilitar la API de Google Calendar en el proyecto ", /* @__PURE__ */ React.createElement("b", null, "jarvis-6f7a8"), "."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("a", { href: "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=jarvis-6f7a8", target: "_blank", rel: "noopener noreferrer", className: "underline font-semibold" }, "Abrir la API de Calendar"), " ", "\u2192 \u201CHabilitar\u201D. Esper\xE1 un minuto y toc\xE1 \u201CActualizar\u201D.")), st.conectado && /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-bold uppercase tracking-wide text-neutral-500 mb-2" }, "Lo que viene"), porDia.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-[12px] text-neutral-500" }, st.ultima ? "Nada en tus calendarios para los pr\xF3ximos 14 d\xEDas." : "Toc\xE1 \u201CActualizar\u201D para leer tus calendarios.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, porDia.map((g) => /* @__PURE__ */ React.createElement("div", { key: g.fecha }, /* @__PURE__ */ React.createElement("div", { className: "text-[12px] font-semibold text-amber-700 dark:text-amber-400 mb-1" }, nombreDia(g.fecha)), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, g.items.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "flex items-start gap-2 text-[12.5px]" }, /* @__PURE__ */ React.createElement("span", { className: "tabular-nums text-neutral-500 shrink-0", style: { width: 62 } }, e.todoElDia ? "Todo el d\xEDa" : e.hora), /* @__PURE__ */ React.createElement("span", { className: "w-1.5 h-1.5 rounded-full shrink-0 mt-1.5", style: { background: e.color || "#C9A227" } }), /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-primary)" } }, e.titulo), e.calendario && /* @__PURE__ */ React.createElement("span", { className: "text-neutral-500" }, " \xB7 ", e.calendario))))))))), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-neutral-500 mt-4 leading-relaxed" }, "El permiso de Google dura una hora en cada aparato; cuando vence, \u201CActualizar\u201D lo renueva con un toque. Lo le\xEDdo viaja con tu cuenta, as\xED que el celular ve lo que se ley\xF3 en la compu."));
 }
 const NotasStore = function() {
   const notas = /* @__PURE__ */ new Map();
@@ -9919,6 +10046,9 @@ const NotasStore = function() {
       creada: n.creada || 0,
       reglado: n.reglado || "lineas",
       alto: Math.round(n.alto || 0),
+      modo: n.modo || "tinta",
+      texto: n.texto || "",
+      especial: n.especial || "",
       casillas: (n.casillas || []).map((c) => [r1(c.x), r1(c.y), r1(c.s), c.ok ? 1 : 0, c.c || "negro"]),
       trazos: (n.trazos || []).map((t) => {
         const q = [];
@@ -9945,6 +10075,9 @@ const NotasStore = function() {
         creada: o.creada || 0,
         reglado: o.reglado || "lineas",
         alto: o.alto || 0,
+        modo: o.modo || "tinta",
+        texto: o.texto || "",
+        especial: o.especial || "",
         casillas: (o.casillas || []).map((a) => ({ x: a[0], y: a[1], s: a[2], ok: !!a[3], c: a[4] || "negro" })),
         trazos: (o.trazos || []).map((a) => {
           const q = a[2] ? String(a[2]).split(",").map(Number) : [];
@@ -11277,7 +11410,225 @@ function NotaLienzo({ nota, esMobile, api }) {
     pedirPintar();
   }, title: "Soltar la selecci\xF3n (Esc)" }, /* @__PURE__ */ React.createElement(X, { size: 16 })))));
 }
-function Notas() {
+const normTxtNota = (x) => String(x || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+function partirRenglonNota(raw) {
+  const m = String(raw).match(/^(\s*)(-*)(\s*)(.*)$/);
+  const txt = (m[4] || "").replace(/^[•·*]\s*/, "").trim();
+  return { pre: m[1] + m[2] + (m[2] ? " " : ""), rayas: m[2].length, txt, pasado: /^✓/.test(txt) };
+}
+function parsearNotaObjetivos(texto, taxonomia) {
+  const tax = (taxonomia || []).filter((t) => t && t.area);
+  const buscaArea = (x) => tax.find((t) => normTxtNota(t.area) === normTxtNota(x));
+  const items = [], avisos = [], pasados = [];
+  let A = null, S = null, U = "";
+  String(texto || "").split("\n").forEach((raw, i) => {
+    const r = partirRenglonNota(raw);
+    if (!r.txt) return;
+    if (r.pasado) {
+      pasados.push(i);
+      return;
+    }
+    if (r.rayas < 3) {
+      const secDe = (a, x) => a ? (a.secciones || []).find((sx) => sx.nombre && normTxtNota(sx.nombre) === normTxtNota(x)) : null;
+      const subDe = (sx, x) => sx ? (sx.subsecciones || []).find((n) => n && normTxtNota(n) === normTxtNota(x)) : null;
+      const prueba = {
+        area: () => {
+          const a = buscaArea(r.txt);
+          if (a) {
+            A = a;
+            S = null;
+            U = "";
+            return true;
+          }
+          return false;
+        },
+        sec: () => {
+          const sx = secDe(A, r.txt);
+          if (sx) {
+            S = sx;
+            U = "";
+            return true;
+          }
+          return false;
+        },
+        sub: () => {
+          const n = subDe(S, r.txt);
+          if (n) {
+            U = n;
+            return true;
+          }
+          return false;
+        }
+      };
+      const orden = r.rayas === 0 ? ["area", "sec", "sub"] : r.rayas === 1 ? ["sec", "sub", "area"] : ["sub", "sec", "area"];
+      if (orden.some((k) => prueba[k]())) return;
+      if (r.rayas > 0) avisos.push({ linea: i, texto: r.txt, motivo: `tiene ${r.rayas === 1 ? "una raya" : "dos rayas"} pero no es ${r.rayas === 1 ? "una secci\xF3n" : "una subsecci\xF3n"} de "I have a dream": se toma como objetivo` });
+    }
+    if (!A) {
+      avisos.push({ linea: i, texto: r.txt, motivo: "no tiene un \xE1rea arriba: no se pasa", fuera: true });
+      return;
+    }
+    items.push({ linea: i, categoria: A.area, seccion: S ? S.nombre : "", subseccion: S ? U : "", tarea: r.txt.replace(/^✓\s*/, "") });
+  });
+  return { items, avisos, pasados };
+}
+function plantillaObjetivosSemana(taxonomia, pendientes) {
+  const out = [];
+  const pend = pendientes || [];
+  const de = (c, se, su) => pend.filter((p) => p.categoria === c && (p.seccion || "") === se && (p.subseccion || "") === su);
+  (taxonomia || []).filter((t) => t && t.area).forEach((t) => {
+    out.push(t.area);
+    de(t.area, "", "").forEach((p) => out.push("--- " + p.tarea));
+    (t.secciones || []).filter((sx) => sx.nombre).forEach((sx) => {
+      out.push("- " + sx.nombre);
+      de(t.area, sx.nombre, "").forEach((p) => out.push("--- " + p.tarea));
+      (sx.subsecciones || []).filter(Boolean).forEach((n) => {
+        out.push("-- " + n);
+        de(t.area, sx.nombre, n).forEach((p) => out.push("--- " + p.tarea));
+      });
+    });
+    out.push("");
+  });
+  return out.join("\n").replace(/\n+$/, "") + "\n";
+}
+function NotaTexto({ nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) {
+  const [texto, setTexto] = useState(nota.texto || "");
+  const [vista, setVista] = useState(null);
+  const [hecho, setHecho] = useState(null);
+  const ref = useRef(null);
+  const timer = useRef(null);
+  const esObj = nota.especial === "objsem";
+  useEffect(() => {
+    if ((nota.texto || "") !== texto && document.activeElement !== ref.current) setTexto(nota.texto || "");
+  }, [nota.texto]);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  function guardarYa(v) {
+    clearTimeout(timer.current);
+    const n = NotasStore.obtener(nota.id);
+    if (n && (n.texto || "") !== v) NotasStore.guardar({ ...n, texto: v });
+  }
+  function cambiar(v) {
+    setTexto(v);
+    setHecho(null);
+    setVista(null);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => guardarYa(v), 700);
+  }
+  function onKeyDown(e) {
+    if (!esObj || e.key !== "Enter" || e.shiftKey) return;
+    const el = e.target, pos = el.selectionStart;
+    const ini = texto.lastIndexOf("\n", pos - 1) + 1;
+    const linea = texto.slice(ini, pos);
+    if (!linea.trim()) return;
+    if (/^\s*---\s*$/.test(linea)) {
+      e.preventDefault();
+      el.setSelectionRange(ini, pos);
+      if (document.execCommand && document.execCommand("delete")) return;
+      const v2 = texto.slice(0, ini) + texto.slice(pos);
+      cambiar(v2);
+      setTimeout(() => {
+        el.selectionStart = el.selectionEnd = ini;
+      }, 0);
+      return;
+    }
+    e.preventDefault();
+    const ins = "\n--- ";
+    if (document.execCommand && document.execCommand("insertText", false, ins)) return;
+    const v = texto.slice(0, pos) + ins + texto.slice(el.selectionEnd);
+    cambiar(v);
+    setTimeout(() => {
+      el.selectionStart = el.selectionEnd = pos + ins.length;
+    }, 0);
+  }
+  function rearmar() {
+    const r = parsearNotaObjetivos(texto, taxonomia);
+    const vacia = !texto.trim();
+    if (!vacia && !window.confirm(`Rearmar la plantilla con tus \xE1reas y secciones de "I have a dream".
+
+Se sacan los renglones ya pasados (\u2713). Los ${r.items.length} objetivo(s) sin pasar quedan, cada uno en su lugar.${r.avisos.filter((a) => a.fuera).length ? `
+OJO: ${r.avisos.filter((a) => a.fuera).length} rengl\xF3n(es) sin \xE1rea se pierden.` : ""}
+
+\xBFSeguimos?`)) return;
+    const v = plantillaObjetivosSemana(taxonomia, r.items);
+    setTexto(v);
+    guardarYa(v);
+    setVista(null);
+    setHecho(null);
+  }
+  function previsualizar() {
+    guardarYa(texto);
+    setHecho(null);
+    setVista(parsearNotaObjetivos(texto, taxonomia));
+  }
+  function pasar() {
+    const r = parsearNotaObjetivos(texto, taxonomia);
+    if (!r.items.length || !agregarObjetivoSemanal) return;
+    r.items.forEach((it, k) => {
+      agregarObjetivoSemanal({
+        categoria: it.categoria,
+        seccion: it.seccion,
+        subseccion: it.subseccion,
+        tarea: it.tarea,
+        dia: null,
+        hora: null,
+        prioridad: "semanal",
+        completado: false,
+        origen: "nota"
+      });
+    });
+    const lineas = texto.split("\n");
+    r.items.forEach((it) => {
+      const p = partirRenglonNota(lineas[it.linea]);
+      lineas[it.linea] = (p.rayas ? p.pre : "--- ") + "\u2713 " + p.txt;
+    });
+    const v = lineas.join("\n");
+    setTexto(v);
+    guardarYa(v);
+    setVista(null);
+    setHecho(r.items.length);
+  }
+  const grupos = vista ? vista.items.reduce((acc, it) => {
+    const k = [it.categoria, it.seccion, it.subseccion].filter(Boolean).join(" \u203A ");
+    (acc[k] = acc[k] || []).push(it);
+    return acc;
+  }, {}) : {};
+  const sinTax = !(taxonomia || []).some((t) => t && t.area);
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, esObj && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-3 flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500 mr-auto" }, "\xC1rea sola \xB7 ", /* @__PURE__ */ React.createElement("b", null, "-"), " secci\xF3n \xB7 ", /* @__PURE__ */ React.createElement("b", null, "--"), " subsecci\xF3n \xB7 ", /* @__PURE__ */ React.createElement("b", null, "---"), " objetivo. Lo pasado queda con \u2713."), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: rearmar,
+      disabled: sinTax,
+      title: "Vuelve a armar el esqueleto con tus \xE1reas, secciones y subsecciones. Lo que no pasaste se conserva.",
+      className: "min-h-[40px] px-3.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-bold disabled:opacity-50"
+    },
+    "Rearmar plantilla"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: previsualizar,
+      className: "min-h-[40px] px-4 rounded-xl bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950 text-sm font-bold flex items-center gap-1.5"
+    },
+    /* @__PURE__ */ React.createElement(ArrowRight, { size: 15, strokeWidth: 2.5 }),
+    " Pasar a Obj. semanales"
+  )), esObj && sinTax && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-3 text-sm" }, 'Todav\xEDa no hay \xE1reas en "I have a dream": armalas ah\xED y despu\xE9s toc\xE1 ', /* @__PURE__ */ React.createElement("b", null, "Rearmar plantilla"), "."), vista && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl border-2 border-amber-500 bg-white dark:bg-neutral-900 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg font-bold" }, vista.items.length ? `Se van a crear ${vista.items.length} objetivo(s), sin d\xEDa` : "No hay objetivos nuevos para pasar"), Object.keys(grupos).map((k) => /* @__PURE__ */ React.createElement("div", { key: k }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold text-neutral-500 dark:text-neutral-400" }, k), /* @__PURE__ */ React.createElement("ul", { className: "mt-1 space-y-0.5" }, grupos[k].map((it) => /* @__PURE__ */ React.createElement("li", { key: it.linea, className: "text-sm" }, "\u2022 ", it.tarea))))), vista.avisos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-2.5 space-y-1" }, vista.avisos.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.linea, className: "text-xs" }, /* @__PURE__ */ React.createElement("b", null, "\u201C", a.texto, "\u201D"), " \u2014 ", a.motivo))), vista.pasados.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-neutral-500" }, vista.pasados.length, " rengl\xF3n(es) con \u2713 ya se hab\xEDan pasado: no se repiten."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, vista.items.length > 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: pasar, className: "min-h-[44px] px-4 rounded-xl bg-amber-500 text-neutral-950 text-sm font-bold" }, "Pasar ", vista.items.length), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setVista(null), className: "min-h-[44px] px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-bold" }, vista.items.length ? "Cancelar" : "Cerrar"))), hecho !== null && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-jade-600 dark:bg-jade-500 text-white p-3 flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold" }, "\u2713 ", hecho, " objetivo(s) en Obj. semanales, sin d\xEDa."), irAObjetivos && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: irAObjetivos, className: "ml-auto min-h-[40px] px-3.5 rounded-xl bg-white/20 text-sm font-bold" }, "Ir a ponerles horario \u2192")), /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      ref,
+      value: texto,
+      onChange: (e) => cambiar(e.target.value),
+      onKeyDown,
+      onBlur: () => guardarYa(texto),
+      spellCheck: true,
+      autoCapitalize: "sentences",
+      placeholder: esObj ? "Toc\xE1 \u201CRearmar plantilla\u201D para traer tus \xE1reas, o escrib\xED ac\xE1." : "Escrib\xED ac\xE1 (con el teclado o con el l\xE1piz).",
+      className: "w-full min-h-[70vh] rounded-2xl bg-white dark:bg-neutral-900 p-5 text-[16px] leading-8 outline-none focus:ring-2 focus:ring-amber-500 resize-y",
+      style: { fontFamily: "inherit", tabSize: 2 }
+    }
+  ));
+}
+function Notas({ taxonomia, agregarObjetivoSemanal, irAObjetivos } = {}) {
   const esMobile = useEsMobile();
   const [, setVer] = useState(0);
   const [tipos, setTipos] = useState([]);
@@ -11343,6 +11694,30 @@ function Notas() {
     const hoy = /* @__PURE__ */ new Date();
     const n = NotasStore.crear({
       titulo: "Nota del " + hoy.getDate() + "/" + (hoy.getMonth() + 1),
+      tipo: filtro !== "todas" && filtro !== "sin" ? filtro : ""
+    });
+    setAbierta(n.id);
+  }
+  function abrirObjSemana() {
+    const ya = NotasStore.lista().find((n2) => n2.especial === "objsem");
+    if (ya) {
+      setAbierta(ya.id);
+      return;
+    }
+    const n = NotasStore.crear({
+      titulo: "Objetivos semanales",
+      modo: "texto",
+      especial: "objsem",
+      texto: (taxonomia || []).some((t) => t && t.area) ? plantillaObjetivosSemana(taxonomia, []) : ""
+    });
+    setAbierta(n.id);
+  }
+  function nuevaTexto() {
+    const hoy = /* @__PURE__ */ new Date();
+    const n = NotasStore.crear({
+      titulo: "Nota del " + hoy.getDate() + "/" + (hoy.getMonth() + 1),
+      modo: "texto",
+      texto: "",
       tipo: filtro !== "todas" && filtro !== "sin" ? filtro : ""
     });
     setAbierta(n.id);
@@ -11418,7 +11793,25 @@ function Notas() {
       className: "flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-sm"
     }
   ), /* @__PURE__ */ React.createElement("button", { onClick: agregarTipo, className: "px-2 py-1 rounded bg-amber-500 text-neutral-950 text-xs font-medium" }, "Agregar")));
-  const panelLista = /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: nueva, className: "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-neutral-950 text-sm font-medium" }, /* @__PURE__ */ React.createElement(Plus, { size: 16 }), " Nueva nota"), /* @__PURE__ */ React.createElement(
+  const panelLista = /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: nueva, className: "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-neutral-950 text-sm font-medium" }, /* @__PURE__ */ React.createElement(Plus, { size: 16 }), " Nueva nota")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: abrirObjSemana,
+      title: "Una nota de texto con tus \xE1reas y secciones para escribir los objetivos de la semana y pasarlos de un toque",
+      className: "flex items-center gap-1.5 px-4 min-h-[40px] rounded-xl bg-amber-500 text-neutral-950 text-sm font-bold shrink-0"
+    },
+    /* @__PURE__ */ React.createElement(Target, { size: 16, strokeWidth: 2.25 }),
+    " Objetivos semanales"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: nuevaTexto,
+      title: "Nota de texto: se escribe con el teclado o con el l\xE1piz (la tablet lo pasa a texto)",
+      className: "flex items-center gap-1.5 px-3 min-h-[40px] rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-semibold text-neutral-700 dark:text-neutral-300 shrink-0"
+    },
+    /* @__PURE__ */ React.createElement(Type, { size: 15 }),
+    " Nota de texto"
+  ), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setGestionTipos(!gestionTipos),
@@ -11455,6 +11848,24 @@ function Notas() {
     /* @__PURE__ */ React.createElement("div", { className: `flex items-center gap-2 text-xs mt-1 min-w-0 ${abierta === n.id ? "opacity-80" : "text-neutral-500 dark:text-neutral-400"}` }, /* @__PURE__ */ React.createElement("span", { className: "truncate" }, tipoValido(n.tipo) ? nombreTipo(n.tipo) : "Sin tipo"), /* @__PURE__ */ React.createElement("span", { className: "shrink-0" }, fmt(n.t)), n.casillas && n.casillas.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "shrink-0" }, "\u2611 ", n.casillas.filter((c) => c.ok).length, "/", n.casillas.length))
   );
   const panelArriba = /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl font-bold mr-1" }, "Notas"), /* @__PURE__ */ React.createElement("button", { onClick: nueva, className: "flex items-center gap-1.5 px-4 min-h-[40px] rounded-xl bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950 text-sm font-bold shrink-0" }, /* @__PURE__ */ React.createElement(Plus, { size: 16, strokeWidth: 2.25 }), " Nueva nota"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: abrirObjSemana,
+      title: "Una nota de texto con tus \xE1reas y secciones para escribir los objetivos de la semana y pasarlos de un toque",
+      className: "flex items-center gap-1.5 px-4 min-h-[40px] rounded-xl bg-amber-500 text-neutral-950 text-sm font-bold shrink-0"
+    },
+    /* @__PURE__ */ React.createElement(Target, { size: 16, strokeWidth: 2.25 }),
+    " Objetivos semanales"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: nuevaTexto,
+      title: "Nota de texto: se escribe con el teclado o con el l\xE1piz (la tablet lo pasa a texto)",
+      className: "flex items-center gap-1.5 px-3 min-h-[40px] rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-semibold text-neutral-700 dark:text-neutral-300 shrink-0"
+    },
+    /* @__PURE__ */ React.createElement(Type, { size: 15 }),
+    " Nota de texto"
+  ), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setListaAbierta(!listaAbierta),
@@ -11503,7 +11914,7 @@ function Notas() {
     },
     /* @__PURE__ */ React.createElement("option", { value: "" }, "Sin tipo"),
     tipos.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.nombre))
-  ), /* @__PURE__ */ React.createElement(
+  ), nota.modo !== "texto" && /* @__PURE__ */ React.createElement(
     "select",
     {
       value: nota.reglado || "lineas",
@@ -11517,7 +11928,7 @@ function Notas() {
   ), /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setMenu(!menu);
     setConfirmarBorrar(false);
-  }, className: "p-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-neutral-500", title: "M\xE1s" }, /* @__PURE__ */ React.createElement(Ellipsis, { size: 16 })), menu && /* @__PURE__ */ React.createElement("div", { className: "jarvis-popover absolute right-0 top-full mt-1 z-50 w-56 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-1" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+  }, className: "p-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-neutral-500", title: "M\xE1s" }, /* @__PURE__ */ React.createElement(Ellipsis, { size: 16 })), menu && /* @__PURE__ */ React.createElement("div", { className: "jarvis-popover absolute right-0 top-full mt-1 z-50 w-56 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-1" }, nota.modo !== "texto" && /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setMenu(false);
     lienzoApi.current && lienzoApi.current.descargar();
   }, className: "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900" }, /* @__PURE__ */ React.createElement(ImageDown, { size: 15 }), " Descargar como imagen"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
@@ -11528,9 +11939,9 @@ function Notas() {
     setAbierta(null);
   }, className: "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm bg-red-600 text-white" }, /* @__PURE__ */ React.createElement(Trash2, { size: 15 }), " S\xED, borrar \u201C", nota.titulo || "sin t\xEDtulo", "\u201D"), /* @__PURE__ */ React.createElement("div", { className: "px-2.5 pt-1.5 pb-1 text-[11px] text-neutral-400" }, "Peso: ", Math.round(NotasStore.peso(nota) / 1024), " KB de 1000 KB"))));
   if (esMobile) {
-    return nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: true, api: lienzoApi })) : panelLista;
+    return nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, nota.modo === "texto" ? /* @__PURE__ */ React.createElement(NotaTexto, { key: nota.id, nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) : /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: true, api: lienzoApi })) : panelLista;
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, panelArriba, nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: false, api: lienzoApi })) : /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-10 text-center text-sm text-neutral-500" }, "Eleg\xED una nota de arriba o cre\xE1 una nueva."));
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, panelArriba, nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, nota.modo === "texto" ? /* @__PURE__ */ React.createElement(NotaTexto, { key: nota.id, nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) : /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: false, api: lienzoApi })) : /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-10 text-center text-sm text-neutral-500" }, "Eleg\xED una nota de arriba o cre\xE1 una nueva."));
 }
 const AYUDA = {
   notas: {
@@ -11602,7 +12013,7 @@ const AYUDA = {
       ["Cada d\xEDa (Dom\u2026S\xE1b)", "lo propio de esa jornada."],
       ["Lapicito", "cambia la actividad de forma PERMANENTE, y con los d\xEDas la mueve o la repite en otros."],
       ["Hora / duraci\xF3n por defecto", "se aplican a todos los d\xEDas marcados; despu\xE9s ajust\xE1s d\xEDa por d\xEDa abajo."],
-      ["Deshacer edici\xF3n", "devuelve un bloque a lo que dice el Sheets."],
+      ["Deshacer edici\xF3n", "devuelve un bloque a como era en la rutina base."],
       ["Mover a la semana", "saca una actividad de la rutina y la deja como cosa de esta semana."],
       ["Reponerlas", "vuelve a mostrar las actividades de la rutina que hab\xEDas ocultado."],
       ["\xD7 en un aviso", "lo descarta. Si m\xE1s adelante aparece algo distinto de ese tipo, el aviso vuelve solo."],
@@ -11611,7 +12022,7 @@ const AYUDA = {
     reglas: [
       "Si dos actividades se pisan en el reloj, la app NO mueve ni acorta ninguna: te lo avisa con \u26A0 en la pesta\xF1a del d\xEDa y con la alarma roja arriba. Cu\xE1l se corre lo decid\xEDs vos con el lapicito.",
       "Superposici\xF3n horaria y Capas son dos avisos distintos: el primero dice que dos actividades se pisan en el reloj; el segundo, que hay cambios guardados encima de la estructura base.",
-      "El Sheets \u201C2026\u201D es la base al sincronizar; tus ediciones se guardan aparte y se re-aplican encima."
+      "La rutina base queda abajo; tus ediciones se guardan aparte y se re-aplican encima."
     ]
   },
   objetivos: {
@@ -11644,13 +12055,13 @@ const AYUDA = {
     reglas: ["Los avisos llegan con la app abierta."]
   },
   datos: {
-    que: "Tu cuenta, la copia de seguridad y la sincronizaci\xF3n entre la compu y el celular.",
+    que: "Tus conexiones y la sincronizaci\xF3n entre la compu y el celular.",
     botones: [
-      ["Descargar copia", "baja un jarvis_backup.json con todo."],
-      ["Restaurar", "vuelve a cargar una copia."],
-      ["Sincronizar", "trae la rutina y los objetivos desde el Sheets."]
+      ["Conectar Google Calendar", "le da permiso a Jarvis para LEER tus calendarios de Google (pr\xF3ximos 14 d\xEDas). Usa la misma cuenta con la que entraste."],
+      ["Actualizar", "vuelve a leer el Calendar. El permiso de Google dura una hora: si venci\xF3, lo renueva con un toque."],
+      ["Este aparato manda / La nube manda", "reparan la cuenta cuando un aparato muestra datos viejos."]
     ],
-    reglas: ["Los datos viven en este navegador; la copia en la nube es lo que los pasa de un dispositivo a otro."]
+    reglas: ["Los datos viven en tu cuenta en la nube; cada aparato baja y sube sus cambios solo.", "Jarvis s\xF3lo LEE tu Google Calendar: no crea ni cambia eventos all\xE1."]
   }
 };
 function AyudaPestana({ tabKey, etiqueta, onTour }) {
@@ -11730,9 +12141,6 @@ function App() {
   const [checklists, setChecklistsState] = useState({});
   const [feedback, setFeedbackState] = useState({});
   const [loaded, setLoaded] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState(null);
-  const [syncSource, setSyncSource] = useState("hardcoded");
   const [rutinaTick, setRutinaTick] = useState(0);
   const [asignaciones, setAsignaciones] = useState({});
   const [manuales, setManuales] = useState([]);
@@ -11902,9 +12310,12 @@ function App() {
       setAvisosDescartados(await loadState("martin:avisos_descartados", {}));
       let c = await loadState("martin:checklists", {});
       const f = await loadState("martin:feedback", {});
-      const ls = await loadState("martin:lastSync", null);
       try {
         window.storage.remove("martin:objetivos_v2");
+      } catch (_) {
+      }
+      try {
+        window.storage.remove("martin:lastSync");
       } catch (_) {
       }
       const DIAS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -11927,13 +12338,11 @@ function App() {
           ...o,
           completado: !!completados2[completadoKey(o)]
         }));
-        setSyncSource("json");
       } else {
         objetivosFinales = (usaPlantilla() ? OBJETIVOS_DEFAULT : []).map((o) => ({
           ...o,
           completado: !!completados2[completadoKey(o)]
         }));
-        setSyncSource(rutinaSyncInfo ? "json" : "hardcoded");
       }
       if (man.length) {
         objetivosFinales = [
@@ -11949,7 +12358,6 @@ function App() {
       setObjetivosState(objetivosFinales);
       setChecklistsState(c);
       setFeedbackState(f);
-      setLastSync(rutinaSyncInfo ? new Date(rutinaSyncInfo).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ls);
       setLoaded(true);
     })();
   }, []);
@@ -12020,6 +12428,7 @@ function App() {
       if (partes.length < 3 || partes[0] !== sem) return;
       const dia = partes[1], bloqueId = partes.slice(2).join("::");
       const ov = SEMANA_OVERRIDES[k] || {};
+      if (Object.keys(ov).length && Object.keys(ov).every((x) => x === "mantener")) return;
       (porDia[dia] = porDia[dia] || []).push({ dia, bloqueId, ov });
     });
     const out = [];
@@ -12277,7 +12686,9 @@ function App() {
   function agregarObjetivoSemanal(obj) {
     const { _aviso, ...limpio } = obj || {};
     const nuevo = materializarRecurrencia(
-      [{ ...limpio, id: "man-" + Date.now(), manual: true }],
+      // Sufijo al azar: "Pasar" desde la nota crea varios en el mismo milisegundo,
+      // y con el mismo id el último pisaba a todos.
+      [{ ...limpio, id: "man-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6), manual: true }],
       /* @__PURE__ */ new Date()
     )[0];
     aplicarAviso(`obj::${nuevo.id}`, { titulo: itemTitulo(nuevo), hora: nuevo.hora, dia: nuevo.dia, area: nuevo.categoria, duracion: nuevo.duracion }, _aviso);
@@ -12504,63 +12915,6 @@ function App() {
       saveState("martin:objetivos_manuales", next);
     }
   }, [objetivos, loaded]);
-  const SYNC_SERVER = "http://localhost:5191";
-  const handleSync = async () => {
-    var _a, _b, _c;
-    setIsSyncing(true);
-    try {
-      let serverSynced = false;
-      try {
-        const ctrl = new AbortController();
-        const timerId = setTimeout(() => ctrl.abort(), 8e3);
-        const resp = await fetch(`${SYNC_SERVER}/sync`, { signal: ctrl.signal });
-        clearTimeout(timerId);
-        if (resp.ok) {
-          const syncResult = await resp.json();
-          serverSynced = true;
-          const rutOk = (_a = syncResult == null ? void 0 : syncResult.rutina) == null ? void 0 : _a.ok;
-          const objOk = (_b = syncResult == null ? void 0 : syncResult.objetivos) == null ? void 0 : _b.ok;
-          const removed = ((_c = syncResult == null ? void 0 : syncResult.objetivos) == null ? void 0 : _c.removed) || 0;
-          console.log(`[Jarvis] sync_server OK \u2014 rutina:${rutOk} objetivos:${objOk} eliminados:${removed}`);
-        }
-      } catch (fetchErr) {
-        console.warn("[Jarvis] sync_server no disponible \u2014 recargando archivos locales:", fetchErr.message);
-      }
-      const { rutinaSyncInfo, objetivosSyncInfo } = await loadSyncData({ forceReload: true });
-      const completados2 = { ...completadosRef.current };
-      objetivos.forEach((o) => {
-        completados2[completadoKey(o)] = !!o.completado;
-      });
-      completadosRef.current = completados2;
-      if (objetivosSyncInfo && objetivosSyncInfo.objetivos) {
-        let fresh = objetivosSyncInfo.objetivos.map((o) => ({
-          ...o,
-          completado: completados2[completadoKey(o)] || false
-        }));
-        if (manuales.length) {
-          fresh = [...fresh, ...manuales.map((m) => ({ ...m, completado: completados2[completadoKey(m)] || false }))];
-        }
-        fresh = aplicarOverridesObj(fresh);
-        fresh = materializarRecurrencia(fresh, /* @__PURE__ */ new Date());
-        fresh = aplicarAsignaciones(fresh, asignaciones);
-        setObjetivosState(fresh);
-        setSyncSource("json");
-        console.log(`[Jarvis] ${serverSynced ? "\u{1F504} Sync en vivo" : "\u{1F4C1} Recarga local"} \u2014 ${fresh.length} objetivos.`);
-      } else if (rutinaSyncInfo) {
-        setSyncSource("json");
-      } else {
-        console.warn("[Jarvis] Sync: no se encontraron archivos JS.");
-      }
-      const ts = (/* @__PURE__ */ new Date()).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-      setLastSync(ts);
-      await saveState("martin:lastSync", ts);
-      setRutinaTick((t) => t + 1);
-    } catch (e) {
-      console.error("[Jarvis] Error sincronizando:", e);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
   useEffect(() => {
     const id = setInterval(() => setNow(/* @__PURE__ */ new Date()), 6e4);
     return () => clearInterval(id);
@@ -12693,7 +13047,7 @@ function App() {
     "button",
     {
       onClick: () => setHeaderAbierto(true),
-      title: "Mostrar la barra completa (tema, backup y sync)",
+      title: "Mostrar la barra completa (tema, nube y cuenta)",
       className: "p-1 rounded-md text-neutral-400 hover:text-amber-600 hover:bg-neutral-100 dark:hover:bg-neutral-900"
     },
     /* @__PURE__ */ React.createElement(ChevronDown, { size: 15 })
@@ -12812,16 +13166,7 @@ function App() {
       agregarObjetivoSemanal,
       migracionInfo: lpMigracionInfo
     }
-  ), tab === "notas" && /* @__PURE__ */ React.createElement(Notas, null), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Copias de seguridad, sincronizaci\xF3n con Sheets y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Copia de seguridad en archivo"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Conect\xE1 una carpeta para respaldo autom\xE1tico, o hac\xE9 una copia manual para descargar / importar."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(BackupControl, null))), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Sincronizaci\xF3n con Google Sheets"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Trae la rutina y los objetivos desde los archivos generados por los skills (requiere sync_server.py en la PC).", lastSync ? " \xDAltima sync: " + lastSync + "." : ""), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: handleSync,
-      disabled: isSyncing,
-      className: `flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors disabled:opacity-50 ${syncSource === "json" ? "border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 hover:bg-green-100 dark:hover:bg-green-950/50" : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`
-    },
-    /* @__PURE__ */ React.createElement("span", { className: isSyncing ? "animate-spin inline-block" : "" }, isSyncing ? "\u{1F504}" : syncSource === "json" ? "\u2705" : "\u26A0\uFE0F"),
-    /* @__PURE__ */ React.createElement("span", null, isSyncing ? "Sincronizando\u2026" : syncSource === "json" ? "Volver a sincronizar" : "Sincronizar (datos hardcodeados ahora)")
-  )), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Tu cuenta en la nube"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Si en alg\xFAn aparato aparecen tareas viejas que ya hab\xEDas borrado, es porque la nube acumul\xF3 datos de versiones anteriores. Eleg\xED desde el aparato que tiene la ", /* @__PURE__ */ React.createElement("b", null, "versi\xF3n buena"), ":"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+  ), tab === "notas" && /* @__PURE__ */ React.createElement(Notas, { taxonomia, agregarObjetivoSemanal, irAObjetivos: () => setTab("objetivos") }), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Tus conexiones (Google Calendar) y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement(GoogleCalendarCard, null), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Tu cuenta en la nube"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Si en alg\xFAn aparato aparecen tareas viejas que ya hab\xEDas borrado, es porque la nube acumul\xF3 datos de versiones anteriores. Eleg\xED desde el aparato que tiene la ", /* @__PURE__ */ React.createElement("b", null, "versi\xF3n buena"), ":"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
@@ -12918,11 +13263,7 @@ function App() {
     if (window.JarvisSync) window.JarvisSync.montado();
   }
   function mount() {
-    if (window.JarvisBackup && window.JarvisBackup.restoreSilent) {
-      window.JarvisBackup.restoreSilent().then(render, render);
-    } else {
-      render();
-    }
+    render();
   }
   if (window.JarvisSync && window.JarvisSync.arrancar) {
     window.JarvisSync.arrancar(mount);
