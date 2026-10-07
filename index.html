@@ -9306,19 +9306,29 @@ function ExploradorLP({ modelo, objetivos, aplicar, guardarObjetivo, setObjetivo
         /* @__PURE__ */ React.createElement("span", { className: `w-[22px] h-[22px] rounded-md shrink-0 flex items-center justify-center border-2 ${ok ? "bg-jade-600 border-jade-600 text-white" : "border-neutral-300 dark:border-neutral-600 text-transparent"}` }, /* @__PURE__ */ React.createElement(Check, { size: 12, strokeWidth: 3.5 })),
         /* @__PURE__ */ React.createElement("span", { className: `text-sm ${ok ? "line-through text-neutral-400" : ""}` }, h.titulo, h.meta && Number(h.meta) > 0 ? /* @__PURE__ */ React.createElement("span", { className: "text-xs text-neutral-500 ml-1.5 tabular-nums" }, h.valor || 0, "/", h.meta, " ", h.unidad) : null)
       ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => eliminarHito(o.id, h.id), "aria-label": "Eliminar hito", className: "w-9 h-9 rounded-lg text-neutral-400 hover:text-laca-600 flex items-center justify-center" }, /* @__PURE__ */ React.createElement(X, { size: 14 })));
-    }), hs.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 py-1.5" }, "Sin hitos: el avance se marca con el c\xEDrculo. Sum\xE1 hitos para medirlo por partes."), /* @__PURE__ */ React.createElement(
+    }), hs.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-sm text-neutral-500 py-1.5" }, "Sin hitos: el avance se marca con el c\xEDrculo. Sum\xE1 hitos para medirlo por partes."), /* @__PURE__ */ React.createElement("form", { onSubmit: (e) => {
+      e.preventDefault();
+      sumarHito(o);
+    }, className: "flex items-center gap-2 mt-2" }, /* @__PURE__ */ React.createElement(
       "input",
       {
         value: nuevoHito,
         onChange: (e) => setNuevoHito(e.target.value),
-        onKeyDown: (e) => {
-          if (e.key === "Enter") sumarHito(o);
-        },
-        placeholder: "+ Nuevo hito (Enter)",
+        enterKeyHint: "done",
+        placeholder: "+ Nuevo hito",
         "aria-label": "Nuevo hito",
-        className: "w-full mt-2 min-h-[42px] px-3 rounded-xl border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-700 bg-transparent text-sm outline-none focus:border-amber-500"
+        className: "flex-1 min-w-0 min-h-[42px] px-3 rounded-xl border-[1.5px] border-dashed border-neutral-300 dark:border-neutral-700 bg-transparent text-sm outline-none focus:border-amber-500"
       }
-    )), secsMismaArea.filter((s) => s.id !== secActual).length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mb-1.5" }, "Mover a otra secci\xF3n"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, secsMismaArea.filter((s) => s.id !== secActual).map((s) => /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "submit",
+        disabled: !nuevoHito.trim(),
+        "aria-label": "Agregar hito",
+        className: "shrink-0 min-h-[42px] px-4 rounded-xl bg-amber-500 text-neutral-900 text-sm font-bold disabled:opacity-40"
+      },
+      "+ Agregar"
+    ))), secsMismaArea.filter((s) => s.id !== secActual).length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold uppercase tracking-widest text-neutral-500 dark:text-neutral-400 mb-1.5" }, "Mover a otra secci\xF3n"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, secsMismaArea.filter((s) => s.id !== secActual).map((s) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: s.id,
