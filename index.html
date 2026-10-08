@@ -2316,6 +2316,7 @@ let BLOQUES_CUSTOM = {};
 let SEMANA_OVERRIDES = {};
 let RUTINA_GENERAL = [];
 let EVENTOS = [];
+let TODOS_DIA = {};
 let RECURRENTES = [];
 function itemTitulo(x) {
   return x.tarea || x.subseccion || x.seccion || x.titulo || x.categoria || x.area || "\u2014";
@@ -2908,6 +2909,14 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
     }
   }
   finales.desplazados = desplazados;
+  if (fechaISO && TODOS_DIA && TODOS_DIA[fechaISO]) {
+    const delDia = TODOS_DIA[fechaISO];
+    finales.forEach((it, i) => {
+      const lista = delDia[idBase(it.id)];
+      if (!lista || !lista.length) return;
+      finales[i] = { ...it, subtareas: (it.subtareas || []).concat(lista.map((t) => ({ id: "td-" + t.id, titulo: t.titulo, hecha: !!t.hecha, deDia: true }))) };
+    });
+  }
   finales.sort((a, b) => timeToMinutes(a.hora) - timeToMinutes(b.hora));
   const prioritarios = finales.filter((it) => it.prioritario);
   if (prioritarios.length === 0) return finales;
@@ -3210,7 +3219,7 @@ function AssignPopover({ objetivo, onAsignar, onClose }) {
     ))
   ));
 }
-function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: objetivosVistaProp, setObjetivos, onToggleRecurrente, onToggleSubRecurrente, checklists, setChecklists, weekDates, rutinaTick, asignarObjetivo, onEditarBloque, onAgregarBloque, esBloqueHecho, toggleBloqueHecho, taxonomia, cosasDeLaSemana, onDeshacerSemana }) {
+function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: objetivosVistaProp, setObjetivos, onToggleRecurrente, onToggleSubRecurrente, checklists, setChecklists, weekDates, rutinaTick, asignarObjetivo, onEditarBloque, onAgregarBloque, esBloqueHecho, toggleBloqueHecho, taxonomia, cosasDeLaSemana, onDeshacerSemana, onTodoDia }) {
   const vista = useMemo(
     () => objetivosVigentes(objetivosVistaProp || objetivos, taxonomia),
     [objetivosVistaProp, objetivos, taxonomia]
@@ -3270,8 +3279,9 @@ function MiDia({ selectedDay, setSelectedDay, now, objetivos, objetivosVista: ob
     setObjetivos(objetivos.map((o2) => String(o2.id) === String(bloque.objetivoId) ? { ...o2, subtareas: (o2.subtareas || []).map((st) => String(st.id) === String(subId) ? { ...st, hecha: !st.hecha } : st) } : o2));
   }
   const esObjetivoConId = (b) => b.tipo === "objetivo" && b.objetivoId != null;
-  const bloqueIsChecked = (b, sid) => esObjetivoConId(b) ? subDeObjetivo(b, sid) : isChecked(b.id, sid);
-  const bloqueToggleSub = (b, sid) => esObjetivoConId(b) ? toggleSubDeObjetivo(b, sid) : toggleChecklist(b.id, sid);
+  const esTodoDia = (sid) => String(sid).indexOf("td-") === 0;
+  const bloqueIsChecked = (b, sid) => esTodoDia(sid) ? !!((b.subtareas || []).find((x) => x.id === sid) || {}).hecha : esObjetivoConId(b) ? subDeObjetivo(b, sid) : isChecked(b.id, sid);
+  const bloqueToggleSub = (b, sid) => esTodoDia(sid) ? onTodoDia && onTodoDia.toggle(fechaSel, b.id, sid) : esObjetivoConId(b) ? toggleSubDeObjetivo(b, sid) : toggleChecklist(b.id, sid);
   const [assigningId, setAssigningId] = useState(null);
   function toggleObjetivoCompletado(id) {
     setObjetivos(objetivos.map((o) => o.id === id ? { ...o, completado: !o.completado, fecha_completado: !o.completado ? hoyISO() : null } : o));
@@ -11565,7 +11575,7 @@ function ObjNotaInput({ valor, onCambio, onBorrar, onEnter, placeholder, esNuevo
     }
   );
 }
-function NotaTexto({ nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) {
+function NotaTexto({ nota, taxonomia, objetivos, agregarObjetivoSemanal, irAObjetivos }) {
   const [texto, setTexto] = useState(nota.texto || "");
   const [vista, setVista] = useState(null);
   const [hecho, setHecho] = useState(null);
@@ -11574,6 +11584,17 @@ function NotaTexto({ nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) {
   const esObj = nota.especial === "objsem";
   const [vistaNota, setVistaNota] = useState(esObj ? "arbol" : "texto");
   const [plegadas, setPlegadas] = useState({});
+  const [zoom, setZoomSt] = useState(() => {
+    const z = Number(notaUI().zoomArbol);
+    return z >= 0.6 && z <= 2 ? z : 1;
+  });
+  const setZoom = (z) => {
+    const v = Math.round(Math.max(0.6, Math.min(2, z)) * 100) / 100;
+    setZoomSt(v);
+    guardarNotaUI({ zoomArbol: v });
+  };
+  const pellizco = useRef(null);
+  const distTouch = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   const nuevosRef = useRef({});
   useEffect(() => {
     const escribiendo = document.activeElement && (document.activeElement === ref.current || document.activeElement.tagName === "INPUT");
@@ -11669,11 +11690,23 @@ OJO: ${r.avisos.filter((a) => a.fuera).length} rengl\xF3n(es) sin \xE1rea se pie
   const todos = arbol ? arbol.items.map((x) => ({ ...x, pasado: false })).concat(arbol.pasados.map((x) => ({ ...x, pasado: true }))).sort((a, b) => a.linea - b.linea) : [];
   const crudos = arbol ? arbol.avisos.filter((a) => a.fuera).map((a) => a.crudo) : [];
   const escribirArbol = (lista) => cambiar(serializarArbolNota(taxonomia, lista, crudos));
-  const enRama = (c, se, su) => todos.filter((p) => p.categoria === c && (p.seccion || "") === se && (p.subseccion || "") === su);
+  const enRama = (c, se, su) => todos.filter((p) => p.categoria === c && (p.seccion || "") === se && (p.subseccion || "") === su && !p.pasado);
+  const iniSemISO = (() => {
+    const d = getInicioDeSemana(/* @__PURE__ */ new Date());
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  })();
+  const objSemana = (objetivos || []).filter((o) => o && !o.archivado && !(o.completado && o.fecha_completado && o.fecha_completado < iniSemISO));
+  const objEnRama = (c, se, su) => objSemana.filter((o) => o.categoria === c && (o.seccion || "") === se && (o.subseccion || "") === su);
+  const cuandoObj = (o) => {
+    if (!o.dia) return "sin d\xEDa";
+    const d = DIAS.find((x) => x.key === o.dia);
+    return (d ? d.es : o.dia) + (o.hora ? " " + o.hora : "");
+  };
   function renglones(c, se, su, conNuevo, color) {
     const lista = enRama(c, se, su);
+    const yaEstan = objEnRama(c, se, su);
     const clave = c + "|" + se + "|" + su;
-    const nodos = lista.map((p, k) => /* @__PURE__ */ React.createElement(RamaNota, { key: clave + "|" + k, color, ultimo: !conNuevo && k === lista.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-h-[40px]" }, p.pasado ? /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0 py-1.5 text-[15px] text-neutral-400 truncate", title: "Ya est\xE1 en Obj. semanales" }, "\u2713 ", p.tarea) : /* @__PURE__ */ React.createElement(
+    const nodos = yaEstan.map((o, k) => /* @__PURE__ */ React.createElement(RamaNota, { key: clave + "|obj|" + o.id, color, ultimo: !conNuevo && !lista.length && k === yaEstan.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-h-[40px]", title: "Ya est\xE1 en Obj. semanales" }, /* @__PURE__ */ React.createElement("span", { className: `w-[18px] h-[18px] rounded-full border-2 shrink-0 flex items-center justify-center ${o.completado ? "bg-jade-600 border-jade-600 text-white" : "border-neutral-300 dark:border-neutral-600 text-transparent"}` }, /* @__PURE__ */ React.createElement(Check, { size: 11, strokeWidth: 3 })), /* @__PURE__ */ React.createElement("span", { className: `flex-1 min-w-0 py-1.5 text-[15px] truncate ${o.completado ? "line-through text-neutral-400" : ""}` }, itemTitulo(o)), /* @__PURE__ */ React.createElement("span", { className: `shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-md tabular-nums ${o.dia ? "bg-neutral-100 dark:bg-neutral-800" : "border border-dashed border-neutral-300 dark:border-neutral-600 text-neutral-500"}` }, cuandoObj(o))))).concat(lista.map((p, k) => /* @__PURE__ */ React.createElement(RamaNota, { key: clave + "|" + k, color, ultimo: !conNuevo && k === lista.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-h-[40px]" }, p.pasado ? /* @__PURE__ */ React.createElement("span", { className: "flex-1 min-w-0 py-1.5 text-[15px] text-neutral-400 truncate", title: "Ya est\xE1 en Obj. semanales" }, "\u2713 ", p.tarea) : /* @__PURE__ */ React.createElement(
       ObjNotaInput,
       {
         valor: p.tarea,
@@ -11694,7 +11727,7 @@ OJO: ${r.avisos.filter((a) => a.fuera).length} rengl\xF3n(es) sin \xE1rea se pie
         className: "shrink-0 w-8 h-8 rounded-lg text-neutral-400 hover:text-red-500 flex items-center justify-center"
       },
       /* @__PURE__ */ React.createElement(X, { size: 14 })
-    ))));
+    )))));
     if (conNuevo) nodos.push(
       /* @__PURE__ */ React.createElement(RamaNota, { key: clave + "|nuevo", color, ultimo: true }, /* @__PURE__ */ React.createElement("div", { className: "min-h-[40px] flex items-center pr-10" }, /* @__PURE__ */ React.createElement(
         ObjNotaInput,
@@ -11711,28 +11744,53 @@ OJO: ${r.avisos.filter((a) => a.fuera).length} rengl\xF3n(es) sin \xE1rea se pie
     );
     return nodos;
   }
-  const arbolVista = arbol && /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-5 space-y-6" }, crudos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-3 text-sm" }, /* @__PURE__ */ React.createElement("b", null, crudos.length, " rengl\xF3n(es) sin \xE1rea"), " (se ven en la vista Texto): ", crudos.map((x) => x.trim()).join(" \xB7 ")), (taxonomia || []).filter((t) => t && t.area).map((t) => {
-    const secs = (t.secciones || []).filter((sx) => sx.nombre);
-    const deArea = enRama(t.area, "", "");
-    const pleg = !!plegadas[t.area];
-    const pend = todos.filter((p) => p.categoria === t.area && !p.pasado).length;
-    return /* @__PURE__ */ React.createElement("div", { key: t.area }, /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        type: "button",
-        onClick: () => setPlegadas({ ...plegadas, [t.area]: !pleg }),
-        className: "flex items-center gap-2 font-serif text-2xl font-extrabold",
-        style: { color: ARBOL_COL.area },
-        "aria-expanded": !pleg
+  const arbolVista = arbol && /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      className: "relative rounded-2xl bg-white dark:bg-neutral-900 min-h-[70vh] overflow-auto",
+      style: { touchAction: "pan-x pan-y" },
+      onTouchStart: (e) => {
+        if (e.touches.length === 2) pellizco.current = { d: distTouch(e.touches), z: zoom };
       },
-      /* @__PURE__ */ React.createElement(ChevronRight, { size: 18, strokeWidth: 2.5, style: { transform: pleg ? "none" : "rotate(90deg)", transition: "transform .15s" } }),
-      t.area,
-      pend > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold font-sans px-2 py-0.5 rounded-full", style: { background: ARBOL_COL.area + "22" } }, pend)
-    ), !pleg && /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, deArea.length > 0 && renglones(t.area, "", "", false, ARBOL_COL.area), secs.map((sx, i) => {
-      const subs = (sx.subsecciones || []).filter(Boolean);
-      return /* @__PURE__ */ React.createElement(RamaNota, { key: sx.nombre, color: ARBOL_COL.area, ultimo: i === secs.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "text-[19px] font-bold leading-10", style: { color: ARBOL_COL.seccion } }, sx.nombre), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, renglones(t.area, sx.nombre, "", subs.length === 0, ARBOL_COL.seccion), subs.map((n, j) => /* @__PURE__ */ React.createElement(RamaNota, { key: n, color: ARBOL_COL.seccion, ultimo: j === subs.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "text-[16px] font-bold leading-10", style: { color: ARBOL_COL.sub } }, n), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, renglones(t.area, sx.nombre, n, true, ARBOL_COL.sub))))));
-    }), secs.length === 0 && renglones(t.area, "", "", true, ARBOL_COL.area)));
-  }));
+      onTouchMove: (e) => {
+        if (e.touches.length === 2 && pellizco.current) setZoom(pellizco.current.z * distTouch(e.touches) / pellizco.current.d);
+      },
+      onTouchEnd: (e) => {
+        if (e.touches.length < 2) pellizco.current = null;
+      },
+      onWheel: (e) => {
+        if (e.ctrlKey) {
+          e.preventDefault();
+          setZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+        }
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "sticky top-0 z-10 flex justify-end p-2 pointer-events-none" }, /* @__PURE__ */ React.createElement("div", { className: "pointer-events-auto flex items-center gap-1 rounded-xl bg-neutral-100/90 dark:bg-neutral-800/90 backdrop-blur p-1 shadow-sm" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setZoom(zoom - 0.1), "aria-label": "Alejar", className: "w-9 h-9 rounded-lg font-bold text-lg hover:bg-white/60 dark:hover:bg-neutral-700" }, "\u2212"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setZoom(1), title: "Volver al 100%", className: "min-w-[52px] h-9 rounded-lg text-xs font-bold tabular-nums hover:bg-white/60 dark:hover:bg-neutral-700" }, Math.round(zoom * 100), "%"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setZoom(zoom + 0.1), "aria-label": "Acercar", className: "w-9 h-9 rounded-lg font-bold text-lg hover:bg-white/60 dark:hover:bg-neutral-700" }, "+"))),
+    /* @__PURE__ */ React.createElement("div", { className: "px-5 pb-8 -mt-6 space-y-6", style: { zoom } }, crudos.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl bg-amber-50 dark:bg-amber-950/20 p-3 text-sm" }, /* @__PURE__ */ React.createElement("b", null, crudos.length, " rengl\xF3n(es) sin \xE1rea"), " (se ven en la vista Texto): ", crudos.map((x) => x.trim()).join(" \xB7 ")), (taxonomia || []).filter((t) => t && t.area).map((t) => {
+      const secs = (t.secciones || []).filter((sx) => sx.nombre);
+      const deArea = enRama(t.area, "", "").concat(objEnRama(t.area, "", ""));
+      const pleg = !!plegadas[t.area];
+      const pend = todos.filter((p) => p.categoria === t.area && !p.pasado).length;
+      const enSem = objSemana.filter((o) => o.categoria === t.area).length;
+      return /* @__PURE__ */ React.createElement("div", { key: t.area }, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => setPlegadas({ ...plegadas, [t.area]: !pleg }),
+          className: "flex items-center gap-2 font-serif text-2xl font-extrabold",
+          style: { color: ARBOL_COL.area },
+          "aria-expanded": !pleg
+        },
+        /* @__PURE__ */ React.createElement(ChevronRight, { size: 18, strokeWidth: 2.5, style: { transform: pleg ? "none" : "rotate(90deg)", transition: "transform .15s" } }),
+        t.area,
+        enSem > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold font-sans px-2 py-0.5 rounded-full text-neutral-500 bg-neutral-100 dark:bg-neutral-800", title: "Ya en Obj. semanales" }, enSem, " en la semana"),
+        pend > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold font-sans px-2 py-0.5 rounded-full", style: { background: ARBOL_COL.area + "22" }, title: "Escritos ac\xE1, sin pasar" }, pend, " sin pasar")
+      ), !pleg && /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, deArea.length > 0 && secs.length > 0 && renglones(t.area, "", "", false, ARBOL_COL.area), secs.map((sx, i) => {
+        const subs = (sx.subsecciones || []).filter(Boolean);
+        return /* @__PURE__ */ React.createElement(RamaNota, { key: sx.nombre, color: ARBOL_COL.area, ultimo: i === secs.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "text-[19px] font-bold leading-10", style: { color: ARBOL_COL.seccion } }, sx.nombre), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, renglones(t.area, sx.nombre, "", subs.length === 0, ARBOL_COL.seccion), subs.map((n, j) => /* @__PURE__ */ React.createElement(RamaNota, { key: n, color: ARBOL_COL.seccion, ultimo: j === subs.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "text-[16px] font-bold leading-10", style: { color: ARBOL_COL.sub } }, n), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, renglones(t.area, sx.nombre, n, true, ARBOL_COL.sub))))));
+      }), secs.length === 0 && renglones(t.area, "", "", true, ARBOL_COL.area)));
+    }))
+  );
   const grupos = vista ? vista.items.reduce((acc, it) => {
     const k = [it.categoria, it.seccion, it.subseccion].filter(Boolean).join(" \u203A ");
     (acc[k] = acc[k] || []).push(it);
@@ -11787,7 +11845,125 @@ OJO: ${r.avisos.filter((a) => a.fuera).length} rengl\xF3n(es) sin \xE1rea se pie
     }
   ));
 }
-function Notas({ taxonomia, agregarObjetivoSemanal, irAObjetivos } = {}) {
+function HojaZoom({ children, clave }) {
+  const [zoom, setZoomSt] = useState(() => {
+    const z = Number(notaUI()[clave || "zoomHoja"]);
+    return z >= 0.6 && z <= 2 ? z : 1;
+  });
+  const setZoom = (z) => {
+    const v = Math.round(Math.max(0.6, Math.min(2, z)) * 100) / 100;
+    setZoomSt(v);
+    guardarNotaUI({ [clave || "zoomHoja"]: v });
+  };
+  const pz = useRef(null);
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  return /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      className: "relative rounded-2xl bg-white dark:bg-neutral-900 min-h-[70vh] overflow-auto",
+      style: { touchAction: "pan-x pan-y" },
+      onTouchStart: (e) => {
+        if (e.touches.length === 2) pz.current = { d: dist(e.touches), z: zoom };
+      },
+      onTouchMove: (e) => {
+        if (e.touches.length === 2 && pz.current) setZoom(pz.current.z * dist(e.touches) / pz.current.d);
+      },
+      onTouchEnd: (e) => {
+        if (e.touches.length < 2) pz.current = null;
+      },
+      onWheel: (e) => {
+        if (e.ctrlKey) {
+          e.preventDefault();
+          setZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+        }
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "sticky top-0 z-10 flex justify-end p-2 pointer-events-none" }, /* @__PURE__ */ React.createElement("div", { className: "pointer-events-auto flex items-center gap-1 rounded-xl bg-neutral-100/90 dark:bg-neutral-800/90 backdrop-blur p-1 shadow-sm" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setZoom(zoom - 0.1), "aria-label": "Alejar", className: "w-9 h-9 rounded-lg font-bold text-lg" }, "\u2212"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setZoom(1), title: "Volver al 100%", className: "min-w-[52px] h-9 rounded-lg text-xs font-bold tabular-nums" }, Math.round(zoom * 100), "%"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setZoom(zoom + 0.1), "aria-label": "Acercar", className: "w-9 h-9 rounded-lg font-bold text-lg" }, "+"))),
+    /* @__PURE__ */ React.createElement("div", { className: "px-5 pb-8 -mt-6", style: { zoom } }, children)
+  );
+}
+function NotaMiDia({ api }) {
+  const [dia, setDia] = useState(api.hoyKey);
+  const nuevosRef = useRef({});
+  const agenda = (api.agenda(dia) || []).filter((b) => (b.duracion || 0) > 0);
+  const fecha = api.fechaDe(dia);
+  const ahora = /* @__PURE__ */ new Date();
+  const minAhora = ahora.getHours() * 60 + ahora.getMinutes();
+  const esHoy = dia === api.hoyKey;
+  const fin = (b) => timeToMinutes(b.hora) + (Number(b.duracion) || 0);
+  const subsDe = (b) => b.subtareas || [];
+  const total = agenda.reduce((n, b) => n + subsDe(b).length, 0);
+  const hechos = agenda.reduce((n, b) => n + subsDe(b).filter((st) => api.hecha(b, st.id)).length, 0);
+  const dObj = DIAS.find((d) => d.key === dia) || {};
+  const fechaTxt = fecha ? (() => {
+    const [y, m, d] = fecha.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString("es-AR", { day: "numeric", month: "long" });
+  })() : "";
+  const Caja = ({ on, onClick, label }) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick,
+      "aria-pressed": on,
+      "aria-label": label,
+      className: `w-[24px] h-[24px] rounded-md border-2 shrink-0 flex items-center justify-center ${on ? "bg-jade-600 border-jade-600 text-white" : "border-neutral-300 dark:border-neutral-600 text-transparent"}`
+    },
+    /* @__PURE__ */ React.createElement(Check, { size: 14, strokeWidth: 3 })
+  );
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-2xl bg-white dark:bg-neutral-900 p-3 flex items-center gap-1.5 flex-wrap" }, DIAS.map((d) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: d.key,
+      type: "button",
+      onClick: () => setDia(d.key),
+      "aria-pressed": dia === d.key,
+      className: `min-h-[38px] px-3 rounded-xl text-sm font-bold ${dia === d.key ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"} ${d.key === api.hoyKey && dia !== d.key ? "ring-2 ring-amber-500" : ""}`
+    },
+    d.es
+  )), /* @__PURE__ */ React.createElement("span", { className: "ml-auto text-xs text-neutral-500" }, "Lo que tach\xE1s o agreg\xE1s ac\xE1 se ve en Mi d\xEDa.")), /* @__PURE__ */ React.createElement(HojaZoom, { clave: "zoomMiDia" }, /* @__PURE__ */ React.createElement("div", { className: "pt-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-3xl font-extrabold", style: { color: ARBOL_COL.area } }, dObj.full || dia, fechaTxt ? " " + fechaTxt.split(" ")[0] : ""), total > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold tabular-nums text-neutral-500" }, hechos, "/", total, " hechos")), agenda.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-4 text-sm text-neutral-500" }, "No hay actividades este d\xEDa."), /* @__PURE__ */ React.createElement("div", { className: "ml-1 mt-1" }, agenda.map((b, i) => {
+    const actual = esHoy && minAhora >= timeToMinutes(b.hora) && minAhora < fin(b);
+    const paso = esHoy && minAhora >= fin(b);
+    const subs = subsDe(b);
+    const clave = b.id;
+    const titulo = b.titulo || b.subarea;
+    return /* @__PURE__ */ React.createElement(RamaNota, { key: b.id, color: ARBOL_COL.area, ultimo: i === agenda.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap min-h-[40px]" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tabular-nums px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800" }, b.hora, "\u2013", minutesToTime(fin(b))), /* @__PURE__ */ React.createElement("span", { className: `text-[18px] font-bold ${paso ? "opacity-60" : ""}`, style: { color: ARBOL_COL.seccion } }, titulo), b.subarea && b.subarea !== titulo && /* @__PURE__ */ React.createElement("span", { className: "text-xs italic text-neutral-500" }, b.subarea), actual && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-neutral-950" }, "ahora")), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, subs.map((st) => {
+      const on = api.hecha(b, st.id);
+      return /* @__PURE__ */ React.createElement(RamaNota, { key: st.id, color: ARBOL_COL.seccion, ultimo: false }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2.5 min-h-[40px]" }, /* @__PURE__ */ React.createElement(Caja, { on, onClick: () => api.toggle(dia, b, st.id), label: on ? "Destachar" : "Tachar" }), st.deDia && !on ? /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement(
+        ObjNotaInput,
+        {
+          valor: st.titulo,
+          onCambio: (t) => api.todo.editar(fecha, b.id, st.id, t),
+          onBorrar: () => api.todo.borrar(fecha, b.id, st.id),
+          onEnter: () => {
+            const el = nuevosRef.current[clave];
+            if (el) el.focus();
+          }
+        }
+      )) : /* @__PURE__ */ React.createElement("span", { className: `flex-1 min-w-0 py-1.5 text-[15px] ${on ? "line-through text-neutral-400" : ""}`, title: "Subtarea de la actividad (se edita en Rutina / Obj. semanales)" }, st.titulo), st.deDia && /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => api.todo.borrar(fecha, b.id, st.id),
+          "aria-label": "Borrar to-do",
+          className: "shrink-0 w-8 h-8 rounded-lg text-neutral-400 hover:text-red-500 flex items-center justify-center"
+        },
+        /* @__PURE__ */ React.createElement(X, { size: 14 })
+      )));
+    }), /* @__PURE__ */ React.createElement(RamaNota, { color: ARBOL_COL.seccion, ultimo: true }, /* @__PURE__ */ React.createElement("div", { className: "min-h-[40px] flex items-center pr-10 pl-[34px]" }, /* @__PURE__ */ React.createElement(
+      ObjNotaInput,
+      {
+        esNuevo: true,
+        valor: "",
+        placeholder: "+ to-do\u2026",
+        inputRef: (el) => {
+          nuevosRef.current[clave] = el;
+        },
+        onCambio: (t) => api.todo.agregar(fecha, b.id, t)
+      }
+    )))));
+  })))));
+}
+function Notas({ taxonomia, objetivos, notaDia, agregarObjetivoSemanal, irAObjetivos } = {}) {
   const esMobile = useEsMobile();
   const [, setVer] = useState(0);
   const [tipos, setTipos] = useState([]);
@@ -11869,6 +12045,15 @@ function Notas({ taxonomia, agregarObjetivoSemanal, irAObjetivos } = {}) {
       especial: "objsem",
       texto: (taxonomia || []).some((t) => t && t.area) ? plantillaObjetivosSemana(taxonomia, []) : ""
     });
+    setAbierta(n.id);
+  }
+  function abrirNotaDia() {
+    const ya = NotasStore.lista().find((n2) => n2.especial === "midia");
+    if (ya) {
+      setAbierta(ya.id);
+      return;
+    }
+    const n = NotasStore.crear({ titulo: "Mi d\xEDa", modo: "texto", especial: "midia", texto: "" });
     setAbierta(n.id);
   }
   function nuevaTexto() {
@@ -11964,6 +12149,15 @@ function Notas({ taxonomia, agregarObjetivoSemanal, irAObjetivos } = {}) {
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
+      onClick: abrirNotaDia,
+      title: "Las actividades del d\xEDa con sus to-do's: se tachan ac\xE1 y se ve en Mi d\xEDa",
+      className: "flex items-center gap-1.5 px-4 min-h-[40px] rounded-xl bg-jade-600 dark:bg-jade-500 text-white text-sm font-bold shrink-0"
+    },
+    /* @__PURE__ */ React.createElement(Sun, { size: 16, strokeWidth: 2.25 }),
+    " Mi d\xEDa"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
       onClick: nuevaTexto,
       title: "Nota de texto: se escribe con el teclado o con el l\xE1piz (la tablet lo pasa a texto)",
       className: "flex items-center gap-1.5 px-3 min-h-[40px] rounded-xl bg-neutral-100 dark:bg-neutral-800 text-sm font-semibold text-neutral-700 dark:text-neutral-300 shrink-0"
@@ -12015,6 +12209,15 @@ function Notas({ taxonomia, agregarObjetivoSemanal, irAObjetivos } = {}) {
     },
     /* @__PURE__ */ React.createElement(Target, { size: 16, strokeWidth: 2.25 }),
     " Objetivos semanales"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: abrirNotaDia,
+      title: "Las actividades del d\xEDa con sus to-do's: se tachan ac\xE1 y se ve en Mi d\xEDa",
+      className: "flex items-center gap-1.5 px-4 min-h-[40px] rounded-xl bg-jade-600 dark:bg-jade-500 text-white text-sm font-bold shrink-0"
+    },
+    /* @__PURE__ */ React.createElement(Sun, { size: 16, strokeWidth: 2.25 }),
+    " Mi d\xEDa"
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -12098,9 +12301,9 @@ function Notas({ taxonomia, agregarObjetivoSemanal, irAObjetivos } = {}) {
     setAbierta(null);
   }, className: "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm bg-red-600 text-white" }, /* @__PURE__ */ React.createElement(Trash2, { size: 15 }), " S\xED, borrar \u201C", nota.titulo || "sin t\xEDtulo", "\u201D"), /* @__PURE__ */ React.createElement("div", { className: "px-2.5 pt-1.5 pb-1 text-[11px] text-neutral-400" }, "Peso: ", Math.round(NotasStore.peso(nota) / 1024), " KB de 1000 KB"))));
   if (esMobile) {
-    return nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, nota.modo === "texto" ? /* @__PURE__ */ React.createElement(NotaTexto, { key: nota.id, nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) : /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: true, api: lienzoApi })) : panelLista;
+    return nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, nota.especial === "midia" && notaDia ? /* @__PURE__ */ React.createElement(NotaMiDia, { key: nota.id, api: notaDia }) : nota.modo === "texto" ? /* @__PURE__ */ React.createElement(NotaTexto, { key: nota.id, nota, taxonomia, objetivos, agregarObjetivoSemanal, irAObjetivos }) : /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: true, api: lienzoApi })) : panelLista;
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, panelArriba, nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, nota.modo === "texto" ? /* @__PURE__ */ React.createElement(NotaTexto, { key: nota.id, nota, taxonomia, agregarObjetivoSemanal, irAObjetivos }) : /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: false, api: lienzoApi })) : /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-10 text-center text-sm text-neutral-500" }, "Eleg\xED una nota de arriba o cre\xE1 una nueva."));
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, panelArriba, nota ? /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, encabezado, nota.especial === "midia" && notaDia ? /* @__PURE__ */ React.createElement(NotaMiDia, { key: nota.id, api: notaDia }) : nota.modo === "texto" ? /* @__PURE__ */ React.createElement(NotaTexto, { key: nota.id, nota, taxonomia, objetivos, agregarObjetivoSemanal, irAObjetivos }) : /* @__PURE__ */ React.createElement(NotaLienzo, { key: nota.id, nota, esMobile: false, api: lienzoApi })) : /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 p-10 text-center text-sm text-neutral-500" }, "Eleg\xED una nota de arriba o cre\xE1 una nueva."));
 }
 const AYUDA = {
   notas: {
@@ -12427,6 +12630,18 @@ function App() {
         const vivos = (Array.isArray(evGuardados) ? evGuardados : []).filter((e) => e && e.fecha && e.fecha >= corte);
         EVENTOS = vivos;
         if (vivos.length !== (evGuardados || []).length) saveState("martin:eventos", vivos);
+      }
+      {
+        const td = await loadState("martin:todos_dia", {});
+        const lim = /* @__PURE__ */ new Date();
+        lim.setDate(lim.getDate() - 30);
+        const corteTd = fechaISOde(lim);
+        const vivos = {};
+        Object.keys(td || {}).forEach((k) => {
+          if (k >= corteTd) vivos[k] = td[k];
+        });
+        TODOS_DIA = vivos;
+        if (Object.keys(vivos).length !== Object.keys(td || {}).length) saveState("martin:todos_dia", vivos);
       }
       const recsSaved = await loadState("martin:recurrentes", null);
       RECURRENTES = recsSaved && Array.isArray(recsSaved) && recsSaved.length ? recsSaved : usaPlantilla() ? RECURRENTES_DEFAULT : [];
@@ -12892,6 +13107,27 @@ function App() {
   function eliminarRutinaGeneral(id) {
     persistRutinaGeneral(rutinaGeneral.filter((g) => g.id !== id));
   }
+  function opTodoDia(fecha, bloqueId, fn) {
+    if (!fecha || bloqueId == null) return;
+    const b = idBase(bloqueId);
+    const dia = { ...TODOS_DIA[fecha] || {} };
+    const lista = fn((dia[b] || []).slice());
+    if (lista.length) dia[b] = lista;
+    else delete dia[b];
+    const next = { ...TODOS_DIA };
+    if (Object.keys(dia).length) next[fecha] = dia;
+    else delete next[fecha];
+    TODOS_DIA = next;
+    saveState("martin:todos_dia", next);
+    setRutinaTick((t) => t + 1);
+  }
+  const sinTd = (id) => String(id).replace(/^td-/, "");
+  const todoDiaApi = {
+    agregar: (fecha, bloqueId, titulo) => opTodoDia(fecha, bloqueId, (l) => l.concat([{ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), titulo, hecha: false }])),
+    editar: (fecha, bloqueId, id, titulo) => opTodoDia(fecha, bloqueId, (l) => l.map((t) => t.id === sinTd(id) ? { ...t, titulo } : t)),
+    borrar: (fecha, bloqueId, id) => opTodoDia(fecha, bloqueId, (l) => l.filter((t) => t.id !== sinTd(id))),
+    toggle: (fecha, bloqueId, id) => opTodoDia(fecha, bloqueId, (l) => l.map((t) => t.id === sinTd(id) ? { ...t, hecha: !t.hecha } : t))
+  };
   function persistEventos(next) {
     EVENTOS = next;
     setEventos(next);
@@ -13058,6 +13294,46 @@ function App() {
   }
   const recurrentesSemana = useMemo(() => recurrentesComoObjetivos(recurrentes, now), [recurrentes, now]);
   const objetivosVista = useMemo(() => [...objetivos, ...recurrentesSemana], [objetivos, recurrentesSemana]);
+  const notaDiaApi = {
+    hoyKey: currentDayKey(now),
+    fechaDe: (dayKey) => {
+      const i = DIAS.findIndex((d) => d.key === dayKey);
+      const wd = getWeekDates(now);
+      return wd[i] ? fechaISOde(wd[i]) : null;
+    },
+    agenda: (dayKey) => {
+      const i = DIAS.findIndex((d) => d.key === dayKey);
+      const wd = getWeekDates(now);
+      return buildDayAgenda(dayKey, objetivosVigentes(objetivosVista, taxonomia), semanaKeyDe(now), wd[i] ? fechaISOde(wd[i]) : null);
+    },
+    hecha: (b, sid) => {
+      if (String(sid).indexOf("td-") === 0) return !!((b.subtareas || []).find((x) => x.id === sid) || {}).hecha;
+      if (b.tipo === "objetivo" && b.objetivoId != null) {
+        const o = objetivosVista.find((x) => String(x.id) === String(b.objetivoId));
+        return !!((o && o.subtareas || []).find((x) => String(x.id) === String(sid)) || {}).hecha;
+      }
+      return !!checklists[`${b.id}-${sid}`];
+    },
+    toggle: (dayKey, b, sid) => {
+      if (String(sid).indexOf("td-") === 0) {
+        todoDiaApi.toggle(notaDiaApi.fechaDe(dayKey), b.id, sid);
+        return;
+      }
+      if (b.tipo === "objetivo" && b.objetivoId != null) {
+        const o = objetivosVista.find((x) => String(x.id) === String(b.objetivoId));
+        if (o && o.esRecurrente) {
+          toggleSubRecurrente(o.id, sid);
+          return;
+        }
+        setObjetivosPersist((prev) => prev.map((x) => String(x.id) === String(b.objetivoId) ? { ...x, subtareas: (x.subtareas || []).map((st) => String(st.id) === String(sid) ? { ...st, hecha: !st.hecha } : st) } : x));
+        return;
+      }
+      const k = `${b.id}-${sid}`;
+      setChecklistsState((prev) => ({ ...prev, [k]: !prev[k] }));
+    },
+    todo: todoDiaApi,
+    rutinaTick
+  };
   useEffect(() => {
     if (!loaded || manuales.length === 0) return;
     const porId = {};
@@ -13239,7 +13515,8 @@ function App() {
       esBloqueHecho,
       toggleBloqueHecho,
       cosasDeLaSemana,
-      onDeshacerSemana: quitarEdicionSemana
+      onDeshacerSemana: quitarEdicionSemana,
+      onTodoDia: todoDiaApi
     }
   ), tab === "organizar" && /* @__PURE__ */ React.createElement(
     OrganizarSemana,
@@ -13278,7 +13555,8 @@ function App() {
       onReiniciarSemana: reiniciarSemana,
       cuentaSemana,
       cosasDeLaSemana,
-      onDeshacerSemana: quitarEdicionSemana
+      onDeshacerSemana: quitarEdicionSemana,
+      onTodoDia: todoDiaApi
     }
   ), tab === "rutina" && /* @__PURE__ */ React.createElement(
     RutinaBase,
@@ -13325,7 +13603,7 @@ function App() {
       agregarObjetivoSemanal,
       migracionInfo: lpMigracionInfo
     }
-  ), tab === "notas" && /* @__PURE__ */ React.createElement(Notas, { taxonomia, agregarObjetivoSemanal, irAObjetivos: () => setTab("objetivos") }), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Tus conexiones (Google Calendar) y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement(GoogleCalendarCard, null), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Tu cuenta en la nube"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Si en alg\xFAn aparato aparecen tareas viejas que ya hab\xEDas borrado, es porque la nube acumul\xF3 datos de versiones anteriores. Eleg\xED desde el aparato que tiene la ", /* @__PURE__ */ React.createElement("b", null, "versi\xF3n buena"), ":"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+  ), tab === "notas" && /* @__PURE__ */ React.createElement(Notas, { taxonomia, objetivos, notaDia: notaDiaApi, agregarObjetivoSemanal, irAObjetivos: () => setTab("objetivos") }), tab === "whatsapp" && /* @__PURE__ */ React.createElement(TareasWhatsApp, null), tab === "recordatorios" && /* @__PURE__ */ React.createElement(Recordatorios, { objetivos, feedback, setFeedback: setFeedbackState }), tab === "datos" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5", style: { maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-4xl font-extrabold tracking-tight" }, "Cuenta y datos"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 2 } }, "Tus conexiones (Google Calendar) y el estado de tu cuenta en la nube.")), /* @__PURE__ */ React.createElement(GoogleCalendarCard, null), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", border: "0.5px solid var(--border-strong)", borderRadius: 20, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 } }, "Tu cuenta en la nube"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 } }, "Si en alg\xFAn aparato aparecen tareas viejas que ya hab\xEDas borrado, es porque la nube acumul\xF3 datos de versiones anteriores. Eleg\xED desde el aparato que tiene la ", /* @__PURE__ */ React.createElement("b", null, "versi\xF3n buena"), ":"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
