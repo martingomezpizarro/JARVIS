@@ -2914,7 +2914,7 @@ function buildDayAgenda(dayKey, objetivos, semKey, fechaISO) {
     finales.forEach((it, i) => {
       const lista = delDia[idBase(it.id)];
       if (!lista || !lista.length) return;
-      finales[i] = { ...it, subtareas: (it.subtareas || []).concat(lista.map((t) => ({ id: "td-" + t.id, titulo: t.titulo, hecha: !!t.hecha, deDia: true }))) };
+      finales[i] = { ...it, subtareas: (it.subtareas || []).concat(lista.map((t) => ({ id: "td-" + t.id, titulo: t.titulo, hecha: !!t.hecha, deDia: true, c: t.c || "" }))) };
     });
   }
   finales.sort((a, b) => timeToMinutes(a.hora) - timeToMinutes(b.hora));
@@ -3907,7 +3907,14 @@ function BloqueTimeline({ bloque, esActual, yaPaso, color, isChecked, onToggleSu
             style: { accentColor: color }
           }
         ),
-        /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: `text-sm ${checked ? "line-through text-neutral-400" : "text-neutral-700 dark:text-neutral-200"}` }, s.titulo), s.link && /* @__PURE__ */ React.createElement(
+        /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            className: `text-sm ${checked ? "line-through text-neutral-400" : "text-neutral-700 dark:text-neutral-200"}`,
+            style: s.c && !checked ? { color: notaTinta(s.c, document.documentElement.classList.contains("dark")) } : void 0
+          },
+          s.titulo
+        ), s.link && /* @__PURE__ */ React.createElement(
           "a",
           {
             href: s.link,
@@ -10277,7 +10284,8 @@ const NOTA_TINTAS = [
   { k: "azul", claro: "#1d4ed8", oscuro: "#7aa7ff", nombre: "Azul" },
   { k: "negro", claro: "#1c1917", oscuro: "#f2efe8", nombre: "Negro" },
   { k: "rojo", claro: "#dc2626", oscuro: "#ff7b7b", nombre: "Rojo" },
-  { k: "verde", claro: "#15803d", oscuro: "#5fd08a", nombre: "Verde" }
+  { k: "verde", claro: "#15803d", oscuro: "#5fd08a", nombre: "Verde" },
+  { k: "amarillo", claro: "#b7791f", oscuro: "#f5c542", nombre: "Amarillo" }
 ];
 const NOTA_LAPIZ = [1.6, 2.6, 4.2, 7];
 const NOTA_GOMA = [8, 18, 36, 70];
@@ -11885,6 +11893,47 @@ function HojaZoom({ children, clave }) {
 function NotaMiDia({ api }) {
   const [dia, setDia] = useState(api.hoyKey);
   const nuevosRef = useRef({});
+  const [selModo, setSelModo] = useState(false);
+  const [sel, setSel] = useState([]);
+  const [arrastre, setArrastre] = useState(null);
+  const oscuro = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+  const claveSel = (b, st) => b.id + "|" + st.id;
+  const itemsDe = (claves) => claves.map((k) => {
+    const i = k.indexOf("|");
+    return { bloqueId: k.slice(0, i), id: k.slice(i + 1) };
+  });
+  const togSel = (k) => setSel((p) => p.indexOf(k) === -1 ? p.concat([k]) : p.filter((x) => x !== k));
+  function moverA(destino, claves) {
+    const lista = claves || sel;
+    if (!lista.length || !destino) return;
+    api.todo.mover(fecha, itemsDe(lista), destino);
+    setSel([]);
+  }
+  function empezarArrastre(e, b, st) {
+    e.preventDefault();
+    e.stopPropagation();
+    const k = claveSel(b, st);
+    const claves = sel.indexOf(k) !== -1 ? sel : [k];
+    const txt = claves.length > 1 ? claves.length + " to-do's" : st.titulo;
+    const sobreDe = (x, y) => {
+      const el = document.elementFromPoint(x, y);
+      const t = el && el.closest && el.closest("[data-bloque-drop]");
+      return t ? t.getAttribute("data-bloque-drop") : null;
+    };
+    setArrastre({ claves, x: e.clientX, y: e.clientY, sobre: null, txt });
+    const mov = (ev) => setArrastre((a) => a ? { ...a, x: ev.clientX, y: ev.clientY, sobre: sobreDe(ev.clientX, ev.clientY) } : a);
+    const fin2 = (ev) => {
+      document.removeEventListener("pointermove", mov);
+      document.removeEventListener("pointerup", fin2);
+      document.removeEventListener("pointercancel", fin2);
+      const destino = ev.type === "pointerup" ? sobreDe(ev.clientX, ev.clientY) : null;
+      setArrastre(null);
+      if (destino) moverA(destino, claves);
+    };
+    document.addEventListener("pointermove", mov);
+    document.addEventListener("pointerup", fin2);
+    document.addEventListener("pointercancel", fin2);
+  }
   const agenda = (api.agenda(dia) || []).filter((b) => (b.duracion || 0) > 0);
   const fecha = api.fechaDe(dia);
   const ahora = /* @__PURE__ */ new Date();
@@ -11920,15 +11969,72 @@ function NotaMiDia({ api }) {
       className: `min-h-[38px] px-3 rounded-xl text-sm font-bold ${dia === d.key ? "bg-neutral-900 text-amber-500 dark:bg-amber-500 dark:text-neutral-950" : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"} ${d.key === api.hoyKey && dia !== d.key ? "ring-2 ring-amber-500" : ""}`
     },
     d.es
-  )), /* @__PURE__ */ React.createElement("span", { className: "ml-auto text-xs text-neutral-500" }, "Lo que tach\xE1s o agreg\xE1s ac\xE1 se ve en Mi d\xEDa.")), /* @__PURE__ */ React.createElement(HojaZoom, { clave: "zoomMiDia" }, /* @__PURE__ */ React.createElement("div", { className: "pt-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-3xl font-extrabold", style: { color: ARBOL_COL.area } }, dObj.full || dia, fechaTxt ? " " + fechaTxt.split(" ")[0] : ""), total > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold tabular-nums text-neutral-500" }, hechos, "/", total, " hechos")), agenda.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-4 text-sm text-neutral-500" }, "No hay actividades este d\xEDa."), /* @__PURE__ */ React.createElement("div", { className: "ml-1 mt-1" }, agenda.map((b, i) => {
+  )), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => {
+        setSelModo(!selModo);
+        setSel([]);
+      },
+      "aria-pressed": selModo,
+      className: `ml-auto min-h-[38px] px-3.5 rounded-xl text-sm font-bold ${selModo ? "bg-amber-500 text-neutral-950" : "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200"}`
+    },
+    selModo ? "Listo" : "Seleccionar"
+  )), (selModo || sel.length > 0) && /* @__PURE__ */ React.createElement("div", { className: "sticky top-16 z-20 rounded-2xl bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 p-2.5 flex items-center gap-2 flex-wrap shadow-lg" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold px-1.5" }, sel.length ? `${sel.length} seleccionado(s)` : "Toc\xE1 los to-do's para elegirlos"), sel.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1", role: "group", "aria-label": "Color" }, NOTA_TINTAS.map((t) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: t.k,
+      type: "button",
+      onClick: () => api.todo.pintar(fecha, itemsDe(sel), t.k === "negro" ? "" : t.k),
+      title: t.nombre,
+      className: "w-8 h-8 rounded-full border-2 border-white/40",
+      style: { background: oscuro ? t.claro : t.oscuro },
+      "aria-label": "Color " + t.nombre
+    }
+  ))), /* @__PURE__ */ React.createElement("select", { value: "", onChange: (e) => moverA(e.target.value), className: "min-h-[38px] px-2 rounded-xl bg-white/15 dark:bg-neutral-900/10 text-sm font-bold" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Mover a\u2026"), agenda.map((b) => /* @__PURE__ */ React.createElement("option", { key: b.id, value: b.id, className: "text-neutral-900" }, b.hora, " \xB7 ", b.titulo || b.subarea))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => {
+        api.todo.borrarVarios(fecha, itemsDe(sel));
+        setSel([]);
+      },
+      className: "min-h-[38px] px-3 rounded-xl bg-red-600 text-white text-sm font-bold"
+    },
+    "Borrar"
+  )), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    setSel([]);
+    setSelModo(false);
+  }, className: "ml-auto min-h-[38px] px-3 rounded-xl bg-white/15 dark:bg-neutral-900/10 text-sm font-bold" }, "Cerrar")), arrastre && /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      className: "fixed z-[60] pointer-events-none px-3 py-1.5 rounded-xl bg-amber-500 text-neutral-950 text-sm font-bold shadow-xl",
+      style: { left: arrastre.x + 12, top: arrastre.y - 18, maxWidth: 260 }
+    },
+    "\u22EE\u22EE ",
+    arrastre.txt
+  ), /* @__PURE__ */ React.createElement(HojaZoom, { clave: "zoomMiDia" }, /* @__PURE__ */ React.createElement("div", { className: "pt-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-3xl font-extrabold", style: { color: ARBOL_COL.area } }, dObj.full || dia, fechaTxt ? " " + fechaTxt.split(" ")[0] : ""), total > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold tabular-nums text-neutral-500" }, hechos, "/", total, " hechos")), agenda.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-4 text-sm text-neutral-500" }, "No hay actividades este d\xEDa."), /* @__PURE__ */ React.createElement("div", { className: "ml-1 mt-1" }, agenda.map((b, i) => {
     const actual = esHoy && minAhora >= timeToMinutes(b.hora) && minAhora < fin(b);
     const paso = esHoy && minAhora >= fin(b);
     const subs = subsDe(b);
     const clave = b.id;
     const titulo = b.titulo || b.subarea;
-    return /* @__PURE__ */ React.createElement(RamaNota, { key: b.id, color: ARBOL_COL.area, ultimo: i === agenda.length - 1 }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap min-h-[40px]" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tabular-nums px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800" }, b.hora, "\u2013", minutesToTime(fin(b))), /* @__PURE__ */ React.createElement("span", { className: `text-[18px] font-bold ${paso ? "opacity-60" : ""}`, style: { color: ARBOL_COL.seccion } }, titulo), b.subarea && b.subarea !== titulo && /* @__PURE__ */ React.createElement("span", { className: "text-xs italic text-neutral-500" }, b.subarea), actual && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-neutral-950" }, "ahora")), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, subs.map((st) => {
+    return /* @__PURE__ */ React.createElement(RamaNota, { key: b.id, color: ARBOL_COL.area, ultimo: i === agenda.length - 1 }, /* @__PURE__ */ React.createElement("div", { "data-bloque-drop": b.id, className: `rounded-xl transition-colors ${arrastre && arrastre.sobre === b.id ? "bg-amber-100 dark:bg-amber-500/20 ring-2 ring-amber-500" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap min-h-[40px]" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tabular-nums px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800" }, b.hora, "\u2013", minutesToTime(fin(b))), /* @__PURE__ */ React.createElement("span", { className: `text-[18px] font-bold ${paso ? "opacity-60" : ""}`, style: { color: ARBOL_COL.seccion } }, titulo), b.subarea && b.subarea !== titulo && /* @__PURE__ */ React.createElement("span", { className: "text-xs italic text-neutral-500" }, b.subarea), actual && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-neutral-950" }, "ahora"), sel.length > 0 && !sel.every((k) => k.indexOf(b.id + "|") === 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => moverA(b.id), className: "text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-500 text-neutral-950" }, "Mover ac\xE1 (", sel.length, ")")), /* @__PURE__ */ React.createElement("div", { className: "ml-1" }, subs.map((st) => {
       const on = api.hecha(b, st.id);
-      return /* @__PURE__ */ React.createElement(RamaNota, { key: st.id, color: ARBOL_COL.seccion, ultimo: false }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2.5 min-h-[40px]" }, /* @__PURE__ */ React.createElement(Caja, { on, onClick: () => api.toggle(dia, b, st.id), label: on ? "Destachar" : "Tachar" }), st.deDia && !on ? /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement(
+      const k = claveSel(b, st);
+      const elegido = sel.indexOf(k) !== -1;
+      const tinta = st.c ? notaTinta(st.c, oscuro) : void 0;
+      return /* @__PURE__ */ React.createElement(RamaNota, { key: st.id, color: ARBOL_COL.seccion, ultimo: false }, /* @__PURE__ */ React.createElement("div", { className: `flex items-center gap-2.5 min-h-[40px] rounded-lg ${elegido ? "bg-amber-100/80 dark:bg-amber-500/15 ring-1 ring-amber-500" : ""}` }, st.deDia ? /* @__PURE__ */ React.createElement(
+        "span",
+        {
+          onPointerDown: (e) => empezarArrastre(e, b, st),
+          title: "Arrastrar a otra actividad",
+          className: "shrink-0 w-6 h-8 -mr-1 flex items-center justify-center text-neutral-400 cursor-grab select-none",
+          style: { touchAction: "none" }
+        },
+        "\u22EE\u22EE"
+      ) : /* @__PURE__ */ React.createElement("span", { className: "shrink-0 w-6 -mr-1" }), /* @__PURE__ */ React.createElement(Caja, { on, onClick: () => api.toggle(dia, b, st.id), label: on ? "Destachar" : "Tachar" }), st.deDia && selModo ? /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => togSel(k), className: `flex-1 min-w-0 text-left py-1.5 text-[15px] ${on ? "line-through text-neutral-400" : ""}`, style: on ? void 0 : { color: tinta } }, st.titulo) : st.deDia && !on ? /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0", style: { color: tinta } }, /* @__PURE__ */ React.createElement(
         ObjNotaInput,
         {
           valor: st.titulo,
@@ -11960,7 +12066,7 @@ function NotaMiDia({ api }) {
         },
         onCambio: (t) => api.todo.agregar(fecha, b.id, t)
       }
-    )))));
+    ))))));
   })))));
 }
 function Notas({ taxonomia, objetivos, notaDia, agregarObjetivoSemanal, irAObjetivos } = {}) {
@@ -12309,7 +12415,7 @@ const AYUDA = {
   notas: {
     que: "Un anotador a mano, como un cuaderno: se escribe con el l\xE1piz de la tablet, se ponen casillas de checklist y cada nota se guarda con su tipo.",
     botones: [
-      ["L\xE1piz", "escribe. Con l\xE1piz de tablet el trazo sigue la presi\xF3n. Cuatro tintas (azul, negro, rojo, verde) y cuatro grosores."],
+      ["L\xE1piz", "escribe. Con l\xE1piz de tablet el trazo sigue la presi\xF3n. Cinco tintas (azul, negro, rojo, verde, amarillo) y cuatro grosores."],
       ["Goma", "borra s\xF3lo lo que toca, con cuatro tama\xF1os. La punta de goma del l\xE1piz (si la tiene) borra sin cambiar de herramienta."],
       ["Lazo", "rode\xE1 lo escrito para seleccionarlo: arrastralo para moverlo, tir\xE1 de una esquina para agrandarlo o achicarlo, o us\xE1 los botones de abajo (achicar, agrandar, color, duplicar, borrar)."],
       ["Casilla \u2611", "toc\xE1 donde va y aparece una casilla alineada al rengl\xF3n; despu\xE9s segu\xEDs escribiendo. Tocar una casilla la tilda o destilda."],
@@ -13122,11 +13228,61 @@ function App() {
     setRutinaTick((t) => t + 1);
   }
   const sinTd = (id) => String(id).replace(/^td-/, "");
+  function grupoTodoDia(fecha, items, fn) {
+    if (!fecha || !items || !items.length) return;
+    const dia = {};
+    Object.keys(TODOS_DIA[fecha] || {}).forEach((k) => {
+      dia[k] = (TODOS_DIA[fecha][k] || []).slice();
+    });
+    if (!fn(dia)) return;
+    Object.keys(dia).forEach((k) => {
+      if (!dia[k].length) delete dia[k];
+    });
+    const next = { ...TODOS_DIA };
+    if (Object.keys(dia).length) next[fecha] = dia;
+    else delete next[fecha];
+    TODOS_DIA = next;
+    saveState("martin:todos_dia", next);
+    setRutinaTick((t) => t + 1);
+  }
   const todoDiaApi = {
     agregar: (fecha, bloqueId, titulo) => opTodoDia(fecha, bloqueId, (l) => l.concat([{ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), titulo, hecha: false }])),
     editar: (fecha, bloqueId, id, titulo) => opTodoDia(fecha, bloqueId, (l) => l.map((t) => t.id === sinTd(id) ? { ...t, titulo } : t)),
     borrar: (fecha, bloqueId, id) => opTodoDia(fecha, bloqueId, (l) => l.filter((t) => t.id !== sinTd(id))),
-    toggle: (fecha, bloqueId, id) => opTodoDia(fecha, bloqueId, (l) => l.map((t) => t.id === sinTd(id) ? { ...t, hecha: !t.hecha } : t))
+    toggle: (fecha, bloqueId, id) => opTodoDia(fecha, bloqueId, (l) => l.map((t) => t.id === sinTd(id) ? { ...t, hecha: !t.hecha } : t)),
+    // items: [{ bloqueId, id }] → todos al final de la actividad `destino`, en el orden elegido.
+    mover: (fecha, items, destino) => grupoTodoDia(fecha, items, (dia) => {
+      const d = idBase(destino), movidos = [];
+      items.forEach(({ bloqueId, id }) => {
+        const b = idBase(bloqueId);
+        if (b === d || !dia[b]) return;
+        const t = dia[b].find((x) => x.id === sinTd(id));
+        if (!t) return;
+        dia[b] = dia[b].filter((x) => x !== t);
+        movidos.push(t);
+      });
+      if (!movidos.length) return false;
+      dia[d] = (dia[d] || []).concat(movidos);
+      return true;
+    }),
+    pintar: (fecha, items, c) => grupoTodoDia(fecha, items, (dia) => {
+      let n = 0;
+      items.forEach(({ bloqueId, id }) => {
+        const b = idBase(bloqueId);
+        dia[b] = (dia[b] || []).map((t) => t.id === sinTd(id) ? (n++, { ...t, c }) : t);
+      });
+      return n > 0;
+    }),
+    borrarVarios: (fecha, items) => grupoTodoDia(fecha, items, (dia) => {
+      let n = 0;
+      items.forEach(({ bloqueId, id }) => {
+        const b = idBase(bloqueId);
+        const antes = (dia[b] || []).length;
+        dia[b] = (dia[b] || []).filter((t) => t.id !== sinTd(id));
+        n += antes - dia[b].length;
+      });
+      return n > 0;
+    })
   };
   function persistEventos(next) {
     EVENTOS = next;
